@@ -200,7 +200,7 @@ jobs:
           persist-credentials: false
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -266,7 +266,7 @@ jobs:
           persist-credentials: false
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -340,7 +340,7 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -420,7 +420,7 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -495,7 +495,7 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -570,7 +570,7 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -645,7 +645,7 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -720,7 +720,7 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -795,7 +795,7 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -878,7 +878,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -956,7 +956,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -1034,7 +1034,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -1112,7 +1112,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -1191,7 +1191,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -1281,7 +1281,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -1358,7 +1358,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -1436,7 +1436,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -1514,7 +1514,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -1592,7 +1592,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -1698,7 +1698,7 @@ jobs:
 
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -1802,7 +1802,7 @@ jobs:
 
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -1903,7 +1903,7 @@ jobs:
 
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -2017,7 +2017,7 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -2095,7 +2095,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
@@ -2207,7 +2207,7 @@ jobs:
           persist-credentials: false
 
       - name: Download qualified release artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
