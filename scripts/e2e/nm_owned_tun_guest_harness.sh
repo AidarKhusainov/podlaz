@@ -60,6 +60,13 @@ run_scenario() {
     "${GUEST_XDG}/cache" "${GUEST_PRIVATE}"
   mark_failure fixture synthetic.endpoint
   start_synthetic_xray_endpoint
+  # This binary is built separately from the exact upstream commit and must
+  # never replace the installed Podlaz Xray or be packaged for production.
+  [[ -n "${PODLAZ_NM_EXTERNAL_XRAY_BINARY:-}" &&
+     -f "${PODLAZ_NM_EXTERNAL_XRAY_BINARY}" &&
+     -x "${PODLAZ_NM_EXTERNAL_XRAY_BINARY}" &&
+     ! -L "${PODLAZ_NM_EXTERNAL_XRAY_BINARY}" ]] || fail "missing pinned guest-only external TUN engine"
+  install -m 0755 "${PODLAZ_NM_EXTERNAL_XRAY_BINARY}" "${XRAY_ROOT}/nm-owned-external-xray"
   install_tun_authorization
   mark_failure diagnostic_unknown profile.import
   guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-synthetic-xray/client-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz import \"\${URI}\" >${GUEST_PRIVATE}/import.stdout 2>${GUEST_PRIVATE}/import.stderr"
