@@ -9,6 +9,11 @@ source "${SCRIPT_DIR}/hosted-synthetic-tun.sh"
 
 PODLAZ_E2E_SYNTHETIC_PROTOCOL=vmess
 PODLAZ_E2E_NM_L3_GUEST=true
+PODLAZ_E2E_NM_TUN_PROFILE="${PODLAZ_E2E_NM_TUN_PROFILE:-typed}"
+case "${PODLAZ_E2E_NM_TUN_PROFILE}" in
+  typed|grouped) ;;
+  *) fail "unqualified NM TUN research profile" ;;
+esac
 case "${PODLAZ_E2E_GUEST_RELEASE:-noble}" in
   noble|resolute) ;;
   *) fail "unsupported disposable NM guest" ;;
@@ -34,6 +39,27 @@ EVIDENCE_KEYS=(
   outer.cleanup
   artifact.privacy
 )
+if [[ "${PODLAZ_E2E_NM_TUN_PROFILE}" == grouped ]]; then
+  EVIDENCE_KEYS+=(tun.grouped_outbounds)
+fi
+
+start_grouped_target() {
+  [[ -z "${XRAY_HTTP_PID}" ]] || fail "synthetic HTTP fixture already owned"
+  install -d -m 0700 "${XRAY_ROOT}/grouped-web"
+  printf 'isolated native group target\n' >"${XRAY_ROOT}/grouped-web/index.html"
+  if ss -H -ltn | awk '{print $4}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:28080" >/dev/null; then
+    fail "synthetic HTTP target port collision"
+  fi
+  python3 -m http.server 28080 --bind "${NM_SECOND_ENDPOINT_IP}" \
+    --directory "${XRAY_ROOT}/grouped-web" >"${XRAY_ROOT}/grouped-http.log" 2>&1 &
+  XRAY_HTTP_PID=$!
+  for _ in $(seq 1 100); do
+    if ss -H -ltn | awk '{print $4}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:28080" >/dev/null; then return 0; fi
+    kill -0 "${XRAY_HTTP_PID}" >/dev/null 2>&1 || fail "synthetic grouped target exited"
+    sleep 0.1
+  done
+  fail "synthetic grouped target unavailable"
+}
 
 run_scenario() {
   mark_failure infrastructure outer.baseline
@@ -60,6 +86,9 @@ run_scenario() {
     "${GUEST_XDG}/cache" "${GUEST_PRIVATE}"
   mark_failure fixture synthetic.endpoint
   start_synthetic_xray_endpoint
+  if [[ "${PODLAZ_E2E_NM_TUN_PROFILE}" == grouped ]]; then
+    start_grouped_target
+  fi
   # This binary is built separately from the exact upstream commit and must
   # never replace the installed Podlaz Xray or be packaged for production.
   [[ -n "${PODLAZ_NM_EXTERNAL_XRAY_BINARY:-}" &&
@@ -93,15 +122,47 @@ run_scenario() {
   wait_guest_status clean-inactive 80
   assert_terminal_authority_clean
 
+  local guest_config="${GUEST_PRIVATE}/nm-owned-generated-xray.json"
+  if [[ "${PODLAZ_E2E_NM_TUN_PROFILE}" == grouped ]]; then
+    # Build a deterministic native two-peer source from the already
+    # qualified installed-package typed transport, then REIMPORT it
+    # through Podlaz. Do not bypass the native Xray composition path.
+    mark_failure product tun.grouped_import
+    guest_exec python3 /workspace/scripts/e2e/nm_owned_tun_grouped_guest.py prepare \
+      "${guest_config}" "${GUEST_PRIVATE}/nm-owned-native-source.json"
+    guest_exec chown e2e:e2e "${GUEST_PRIVATE}/nm-owned-native-source.json"
+    run_guest_user /usr/bin/podlaz import "${GUEST_PRIVATE}/nm-owned-native-source.json" \
+      >"${PRIVATE_ROOT}/grouped-import.stdout" 2>"${PRIVATE_ROOT}/grouped-import.stderr"
+    local grouped_selector
+    grouped_selector="$(sed -n 's/^Profile: //p' "${PRIVATE_ROOT}/grouped-import.stdout" | head -n1)"
+    [[ -n "${grouped_selector}" ]] || fail "native grouped import selector unavailable"
+    mark_failure product tun.grouped_package_generation
+    run_guest_user /usr/bin/podlaz connect "${grouped_selector}" \
+      >"${PRIVATE_ROOT}/grouped-connect.stdout" 2>"${PRIVATE_ROOT}/grouped-connect.stderr"
+    wait_guest_status verified-active 120
+    assert_verified_active_authority
+    guest_exec install -m 0600 /run/podlaz/generated/xray.json \
+      "${GUEST_PRIVATE}/nm-owned-grouped-xray.json"
+    run_guest_user /usr/bin/podlaz disconnect \
+      >"${PRIVATE_ROOT}/grouped-disconnect.stdout" 2>"${PRIVATE_ROOT}/grouped-disconnect.stderr"
+    wait_guest_status clean-inactive 80
+    assert_terminal_authority_clean
+    guest_config="${GUEST_PRIVATE}/nm-owned-grouped-xray.json"
+  fi
+
   mark_failure capability tun.nm_owned_feasibility
   guest_exec python3 /workspace/scripts/e2e/nm_owned_tun_guest.py \
-    "${GUEST_PRIVATE}/nm-owned-generated-xray.json" \
+    "${guest_config}" "${PODLAZ_E2E_NM_TUN_PROFILE}" \
     >"${PRIVATE_ROOT}/nm-owned-result.stdout" 2>"${PRIVATE_ROOT}/nm-owned-result.stderr"
 
   local label
   for label in nm-owned-link-and-l3 nm-owned-xray-attached nm-owned-protected-traffic nm-owned-natural-full nm-owned-nm-post-xray-active nm-owned-result; do
     grep -Fx "${label}=pass" "${PRIVATE_ROOT}/nm-owned-result.stdout" >/dev/null
   done
+  if [[ "${PODLAZ_E2E_NM_TUN_PROFILE}" == grouped ]]; then
+    grep -Fx 'nm-owned-grouped-outbounds=pass' "${PRIVATE_ROOT}/nm-owned-result.stdout" >/dev/null
+    record_evidence tun.grouped_outbounds pass
+  fi
   record_evidence tun.nm_owned_link pass
   record_evidence tun.xray_attached pass
   record_evidence tun.protected_traffic pass
