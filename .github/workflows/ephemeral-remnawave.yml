@@ -107,7 +107,7 @@ jobs:
 
       - name: Upload subscription and HWID evidence
         if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-remnawave-subscription-pr
           path: ${{ runner.temp }}/podlaz-remnawave-client-public/remnawave-subscription.txt
@@ -173,7 +173,7 @@ jobs:
 
       - name: Upload proxy evidence
         if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-remnawave-proxy-pr
           path: ${{ runner.temp }}/podlaz-remnawave-proxy-public/remnawave-proxy.txt
@@ -249,7 +249,7 @@ jobs:
 
       - name: Upload TUN evidence
         if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-remnawave-tun-pr
           path: ${{ runner.temp }}/podlaz-remnawave-tun-public/hosted-remnawave-tun.txt
