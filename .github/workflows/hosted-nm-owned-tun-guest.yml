@@ -1,0 +1,90 @@
+name: Hosted NM-Owned TUN Feasibility
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/hosted-nm-owned-tun-guest.yml'
+      - 'scripts/e2e/nm_owned_tun_guest.py'
+      - 'scripts/e2e/nm_owned_tun_guest_test.py'
+      - 'scripts/e2e/nm_owned_tun_guest_harness.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guest:
+    name: NM-owned TUN + packaged Xray (${{ matrix.release }}, disposable guest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [noble, resolute]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+      - name: Check isolated TUN ownership contracts
+        run: |
+          python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_guest_test.py' -v
+          python3 -m py_compile scripts/e2e/nm_owned_tun_guest.py
+          bash -n scripts/e2e/nm_owned_tun_guest_harness.sh
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+      - name: Build exact candidate package
+        env:
+          PODLAZ_COMMIT: ${{ github.sha }}
+        run: bash scripts/build-deb.sh
+      - name: Exercise NM-owned TUN in disposable nspawn guest
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-owned-tun-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-owned-tun-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
+          PODLAZ_E2E_GUEST_RELEASE: ${{ matrix.release }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          if bash scripts/e2e/nm_owned_tun_guest_harness.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb \
+            >"${RUNNER_TEMP}/nm-owned-tun.stdout" \
+            2>"${RUNNER_TEMP}/nm-owned-tun.stderr"; then
+            printf 'nm-owned-tun-guest=completed\n'
+          else
+            # Strict allowlisted checkpoint from the private child report.
+            # NEVER export Xray logs, TUN addresses, certificates or config.
+            if [[ -f "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" ]]; then
+              grep -E '^nm-owned-failure-step=(barrier-armed|underlay-allocated|nm-created|xray-attaching|real-traffic|natural-global-full|xray-release|cleanup-xray|cleanup-nm|cleanup-underlay|cleanup-barrier)$' \
+                "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
+            fi
+            printf 'nm-owned-tun-guest=failed\n' >&2
+            exit 1
+          fi
+      - name: Validate fixed-schema evidence
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-owned-tun-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-owned-tun-public
+        run: bash scripts/e2e/nm_owned_tun_guest_harness.sh validate-report
+      - name: Remove all private guest material
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-nm-owned-tun-private" "${RUNNER_TEMP}/nm-owned-tun.stdout" "${RUNNER_TEMP}/nm-owned-tun.stderr"
+      - name: Publish privacy-safe fixed-schema report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nm-owned-tun-feasibility-${{ matrix.release }}
+          path: ${{ runner.temp }}/podlaz-nm-owned-tun-public/hosted-synthetic-tun.txt
+          if-no-files-found: error
+          retention-days: 7
