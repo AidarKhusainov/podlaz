@@ -173,7 +173,7 @@ jobs:
           printf 'sha256=%s\n' "$(sha256sum dist/release/SHA256SUMS | awk '{print $1}')" >>"${GITHUB_OUTPUT}"
 
       - name: Upload release artifacts for qualification
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: |
@@ -238,7 +238,7 @@ jobs:
 
       - name: Upload exact-package diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-release-installed-runtime-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
@@ -307,7 +307,7 @@ jobs:
 
       - name: Upload synthetic TUN release evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-release-synthetic-tun-${{ matrix.protocol }}-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-release-synthetic-public/hosted-synthetic-tun.txt
@@ -389,7 +389,7 @@ jobs:
 
       - name: Upload exact Remnawave proxy evidence
         if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-release-remnawave-proxy-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-release-remnawave-public/remnawave-proxy.txt
@@ -464,7 +464,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-wifi-lifecycle-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-release-wifi-public/hosted-vm-wifi-lifecycle.txt
@@ -539,7 +539,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-terminal-boot-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-release-terminal-public/hosted-vm-terminal-boot.txt
@@ -614,7 +614,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-boot-authority-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-release-boot-authority-public/hosted-vm-boot-authority.txt
@@ -689,7 +689,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-suspend-resume-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-release-suspend-resume-public/hosted-vm-suspend-resume.txt
@@ -764,7 +764,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-reboot-autostart-disabled-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-release-reboot-autostart-disabled-public/hosted-vm-reboot-autostart-disabled.txt
@@ -839,7 +839,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-boot-continuation-ordering-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-release-boot-continuation-ordering-public/hosted-vm-boot-continuation-ordering.txt
@@ -917,7 +917,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-daemon-recovery
           path: ${{ runner.temp }}/podlaz-release-recovery-public/hosted-daemon-recovery.txt
@@ -995,7 +995,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-xray-replacement
           path: ${{ runner.temp }}/podlaz-release-xray-replacement-public/hosted-xray-replacement.txt
@@ -1073,7 +1073,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-network-apply-rollback
           path: ${{ runner.temp }}/podlaz-release-network-apply-public/hosted-network-apply-rollback.txt
@@ -1151,7 +1151,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-network-verify-rollback
           path: ${{ runner.temp }}/podlaz-release-network-verify-public/hosted-network-verify-rollback.txt
@@ -1230,7 +1230,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-terminal-failure-convergence
           path: ${{ runner.temp }}/podlaz-release-terminal-failure-public/hosted-terminal-failure-convergence.txt
@@ -1320,7 +1320,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-network-reconciliation-${{ matrix.scenario }}
           path: ${{ runner.temp }}/podlaz-release-network-reconciliation-${{ matrix.scenario }}-public/hosted-network-reconciliation-${{ matrix.scenario }}.txt
@@ -1397,7 +1397,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-stale-observation
           path: ${{ runner.temp }}/podlaz-release-stale-observation-public/hosted-stale-observation.txt
@@ -1475,7 +1475,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-foreign-state-safety
           path: ${{ runner.temp }}/podlaz-release-foreign-state-public/hosted-foreign-state-safety.txt
@@ -1553,7 +1553,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-protected-gateway-lifecycle
           path: ${{ runner.temp }}/podlaz-release-protected-gateway-public/hosted-protected-gateway-lifecycle.txt
@@ -1631,7 +1631,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-precommit-interruption
           path: ${{ runner.temp }}/podlaz-release-precommit-public/hosted-precommit-interruption.txt
@@ -1759,7 +1759,7 @@ jobs:
 
       - name: Upload maintained qualification evidence
         if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-maintained-package-upgrade
           path: ${{ runner.temp }}/podlaz-maintained-upgrade-public
@@ -1862,7 +1862,7 @@ jobs:
 
       - name: Upload pinned v0.2.29 qualification evidence
         if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-v029-package-recovery
           path: ${{ runner.temp }}/podlaz-v029-recovery-public
@@ -1964,7 +1964,7 @@ jobs:
 
       - name: Upload public qualification evidence
         if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-release-package-restart
           path: ${{ runner.temp }}/podlaz-release-package-restart-public
@@ -2053,7 +2053,7 @@ jobs:
 
       - name: Upload subscription and HWID evidence
         if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-release-remnawave-subscription-pr
           path: ${{ runner.temp }}/podlaz-release-remnawave-client-public/remnawave-subscription.txt
@@ -2137,7 +2137,7 @@ jobs:
 
       - name: Upload TUN evidence
         if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-release-remnawave-tun-pr
           path: ${{ runner.temp }}/podlaz-release-remnawave-tun-public/hosted-remnawave-tun.txt
