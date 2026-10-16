@@ -77,6 +77,70 @@ Xray owns creation/lifetime of the native `podlaz0` TUN link. The daemon may con
 
 `systemd-resolved` and nftables verification are composition checks, not presence checks. Extra/foreign state inside a Podlaz-owned resource is ambiguous and fails closed rather than being normalized away.
 
+## Optional NetworkManager integration: full-profile design gate
+
+**Decision: blocked on the current stock VPN Plugin interface, not shipped.**
+The approved target is opt-in NetworkManager integration for **every Podlaz-supported
+imported Remnawave profile**, including VLESS/REALITY and schema-opaque
+native/grouped Xray configurations with multiple outbounds, routing and
+balancers. This does not add Sing-box JSON import support or change the default
+Podlaz backend. A typed-single-server implementation or transparent fallback to
+the existing backend does **not** satisfy the NetworkManager integration target.
+
+**Verified incompatibility.** The VPN Plugin generic `Config.gateway` is
+defined as the *public external VPN gateway address*. Stock NetworkManager
+[1.46.0](https://github.com/NetworkManager/NetworkManager/blob/1.46.0/src/core/vpn/nm-vpn-connection.c)
+and [1.54.3](https://github.com/NetworkManager/NetworkManager/blob/1.54.3/src/core/vpn/nm-vpn-connection.c)
+reject the generic VPN configuration when both IPv4 and IPv6 external gateway
+addresses are absent (`config: no VPN gateway address received`). Disabling
+`ipv4/ipv6.auto-route-ext-gw` does not bypass this validation. An Xray-native
+routing graph does not necessarily have one stable public gateway: different
+outbounds can dial different DNS-derived peers at the same time. An observed
+peer, uplink router, loopback or fabricated IP is not a truthful substitute.
+Thus the existing guest VPN Plugin/L3 prototype does **not** establish an
+option-B implementation on stock NM. No automatic Internet-connectivity probe
+bypass, forged FULL signal or synthetic default route is acceptable.
+
+**Admissible architectural directions, neither yet qualified:**
+
+1. Validate an **NM-managed TUN device/connection** with real delegated L3 and
+   an Xray packet data plane attached without a second link/L3 owner.
+   NetworkManager documents a distinct `tun` connection type, which is not
+   proof it can adopt the current Xray-created link or advertise the requested
+   VPN/global connectivity state. Verify link creation, FD ownership and
+   lifetime, NM-managed default-route selection, actual traffic and natural
+   global FULL on both supported versions before selecting this design.
+2. Seek an upstream-supported **gateway-less VPN L3 contract** (and suitable NM
+   route/connectivity aggregation) with documented compatibility/backports for
+   supported distributions. Do not silently fork or mandate a newer
+   NetworkManager; that is a separate explicit product compatibility decision.
+
+Any future implementation has one writer per resource: NetworkManager for
+delegated link L3, DNS and VPN/device activation where applicable; Podlaz for
+boot-ID-scoped session intent, Privacy Envelope, firewall/policy protection,
+allocation and exact cleanup authority; Xray for opaque provider routing,
+balancers and authenticated transport. Persist exact NM UUID, link ifindex,
+generation transitions and collision-checked resource identities before
+mutation. Endpoint/transport DNS bootstrap must remain authenticated, protected
+and independent of a possibly unavailable tunnel; Xray marks must cover all
+applicable provider dials without corrupting provider-owned config, with
+TLS/REALITY peer identity preserved. Changing DNS answers require generation
+handoff under an already-armed fail-closed envelope.
+
+Admission requires fault-injected real guests for **all supported profile
+classes** and NM 1.46/1.54: natural global FULL, encrypted DNS/HTTPS, IPv4/IPv6
+no-leak, multi-outbound selection/rebalance, DNS/IP churn, failed apply,
+ownership collisions, NM/Xray/daemon crashes and restarts, boot autostart,
+exact-owned teardown and foreign-state survival. Missing NM with user-requested
+opt-in must fail explicitly rather than silently report successful NM mode; no
+NM dependency is introduced by this decision. Until these gates are satisfied,
+the current Podlaz backend and package/CLI behavior are unchanged.
+
+Upstream contracts: [VPN Plugin D-Bus](https://networkmanager.dev/docs/api/latest/gdbus-org.freedesktop.NetworkManager.VPN.Plugin.html),
+[VPN gateway definition](https://github.com/NetworkManager/NetworkManager/blob/1.54.3/src/libnm-core-public/nm-vpn-dbus-interface.h),
+[NM TUN settings](https://networkmanager.dev/docs/api/latest/settings-tun.html),
+[Xray socket marks and DNS behavior](https://xtls.github.io/en/config/transports/sockopt.html).
+
 ## Network Session and Privacy Envelope
 
 A TUN Network Session separates the replaceable Data Plane Generation from a session-scoped Privacy Envelope. The envelope keeps ordinary egress fail-closed while a data-plane generation is replaced, rolled back, or recovered after daemon failure/restart.
