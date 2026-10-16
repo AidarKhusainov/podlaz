@@ -1,0 +1,156 @@
+name: Hosted NM-Owned TUN Feasibility
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/hosted-nm-owned-tun-guest.yml'
+      - 'scripts/e2e/nm_owned_tun_guest.py'
+      - 'scripts/e2e/nm_owned_tun_guest_test.py'
+      - 'scripts/e2e/nm_owned_tun_guest_harness.sh'
+      - 'scripts/e2e/nm_owned_tun_grouped_guest.py'
+      - 'scripts/e2e/nm_owned_tun_grouped_guest_test.py'
+      - 'scripts/e2e/nm_owned_tun_xray_patch.py'
+      - 'scripts/e2e/nm_owned_tun_xray_patch_test.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guest-only-xray:
+    name: Build pinned Xray inherited-FD prototype
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout research source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup pinned Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Validate fail-closed source patch
+        run: |
+          python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_xray_patch_test.py' -v
+          python3 -m py_compile scripts/e2e/nm_owned_tun_xray_patch.py
+      - name: Build separate upstream Xray prototype
+        env:
+          GOTOOLCHAIN: local
+          PINNED_XRAY_COMMIT: d2758a023cd7f4174a5a5fa4ff66e487d4342ba0
+        run: |
+          set -Eeuo pipefail
+          git clone --depth 1 --branch v26.3.27 --single-branch \
+            https://github.com/XTLS/Xray-core.git "${RUNNER_TEMP}/xray-source"
+          test "$(git -C "${RUNNER_TEMP}/xray-source" rev-parse HEAD)" = "${PINNED_XRAY_COMMIT}"
+          python3 scripts/e2e/nm_owned_tun_xray_patch.py "${RUNNER_TEMP}/xray-source"
+          gofmt -w "${RUNNER_TEMP}/xray-source/proxy/tun/tun_linux.go"
+          mkdir -p "${RUNNER_TEMP}/nm-owned-engine"
+          (
+            cd "${RUNNER_TEMP}/xray-source"
+            CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
+              -o "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray" ./main
+          )
+          test -x "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
+          sha256sum "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
+      - name: Export guest-only binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nm-owned-tun-xray-prototype
+          path: ${{ runner.temp }}/nm-owned-engine/nm-owned-external-xray
+          if-no-files-found: error
+          retention-days: 7
+
+  guest:
+    needs: guest-only-xray
+    name: NM-owned external-FD Xray (${{ matrix.release }}, ${{ matrix.profile }}, guest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [noble, resolute]
+        profile: [typed, grouped]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+      - name: Download and validate experimental Xray binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: nm-owned-tun-xray-prototype
+          path: ${{ runner.temp }}/nm-owned-engine
+      - name: Check isolated TUN ownership contracts
+        run: |
+          python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_guest_test.py' -v
+          python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_grouped_guest_test.py' -v
+          python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_xray_patch_test.py' -v
+          python3 -m py_compile scripts/e2e/nm_owned_tun_guest.py scripts/e2e/nm_owned_tun_grouped_guest.py scripts/e2e/nm_owned_tun_xray_patch.py
+          bash -n scripts/e2e/nm_owned_tun_guest_harness.sh
+          test -f "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
+          test ! -L "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
+          chmod 0755 "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+      - name: Build exact candidate package
+        env:
+          PODLAZ_COMMIT: ${{ github.sha }}
+        run: bash scripts/build-deb.sh
+      - name: Exercise NM-owned TUN in disposable nspawn guest
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-owned-tun-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-owned-tun-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
+          PODLAZ_E2E_GUEST_RELEASE: ${{ matrix.release }}
+          PODLAZ_E2E_NM_TUN_PROFILE: ${{ matrix.profile }}
+          PODLAZ_NM_EXTERNAL_XRAY_BINARY: ${{ runner.temp }}/nm-owned-engine/nm-owned-external-xray
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          if bash scripts/e2e/nm_owned_tun_guest_harness.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb \
+            >"${RUNNER_TEMP}/nm-owned-tun.stdout" \
+            2>"${RUNNER_TEMP}/nm-owned-tun.stderr"; then
+            printf 'nm-owned-tun-guest=completed\n'
+          else
+            # Strict allowlisted checkpoint from the private child report.
+            # NEVER export Xray logs, TUN addresses, certificates or config.
+            if [[ -f "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" ]]; then
+              grep -E '^nm-owned-failure-step=(barrier-armed|underlay-allocated|nm-created|xray-attaching|real-traffic|natural-global-full|xray-release|cleanup-xray|cleanup-nm|grouped-independent-outbounds|cleanup-underlay|cleanup-barrier)$' \
+                "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
+              grep -Fx 'nm-owned-admin-lifecycle-violation=observed' \
+                "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
+            fi
+            printf 'nm-owned-tun-guest=failed\n' >&2
+            exit 1
+          fi
+      - name: Validate fixed-schema evidence
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-owned-tun-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-owned-tun-public
+          PODLAZ_E2E_NM_TUN_PROFILE: ${{ matrix.profile }}
+        run: bash scripts/e2e/nm_owned_tun_guest_harness.sh validate-report
+      - name: Remove all private guest material
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-nm-owned-tun-private" "${RUNNER_TEMP}/nm-owned-tun.stdout" "${RUNNER_TEMP}/nm-owned-tun.stderr"
+      - name: Publish privacy-safe fixed-schema report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nm-owned-tun-feasibility-${{ matrix.release }}-${{ matrix.profile }}
+          path: ${{ runner.temp }}/podlaz-nm-owned-tun-public/hosted-synthetic-tun.txt
+          if-no-files-found: error
+          retention-days: 7
