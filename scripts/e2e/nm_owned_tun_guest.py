@@ -6,8 +6,10 @@ the pinned Xray must not replace or down NM's exact TUN when it exits.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import struct
 from pathlib import Path
 import subprocess
 import sys
@@ -112,6 +114,41 @@ def _cleanup_underlay(plan: object) -> None:
         raise ValueError("NM TUN research underlay did not clean exactly")
 
 
+def start_externally_managed_xray(
+    config_file: Path, index: int, output: object, errors: object
+) -> subprocess.Popen:
+    """Hand the exact existing NM TUN packet descriptor to a guest-only Xray.
+
+    Open the TUN as root in the nspawn process, verify the same link identity,
+    and transfer only this FD to the Xray child. Neither side may invent a
+    substitute link or change the NetworkManager-managed interface settings.
+    """
+    candidate = Path("/run/podlaz-synthetic-xray/nm-owned-external-xray")
+    if not candidate.is_file() or candidate.is_symlink() or not os.access(candidate, os.X_OK):
+        raise ValueError("missing isolated external-TUN Xray test binary")
+    if type(index) is not int or index <= 0 or _link().get("ifindex") != index:
+        raise ValueError("stale NM-owned TUN identity before FD handoff")
+    fd = os.open("/dev/net/tun", os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        # Linux amd64 ifreq: IFNAMSIZ=16, flags IFF_TUN|IFF_NO_PI.
+        # TUNSETIFF attaches an FD to NM's existing persistent TUN.
+        request = bytearray(struct.pack("16sH22x", b"podlaz0", 0x0001 | 0x1000))
+        fcntl.ioctl(fd, 0x400454ca, request, True)
+        if request[:16].split(b"\\0", 1)[0] != b"podlaz0":
+            raise ValueError("external FD attached to another interface")
+        if _link().get("ifindex") != index:
+            raise ValueError("NM-owned TUN changed during FD handoff")
+        environment = os.environ.copy()
+        environment["PODLAZ_NM_GUEST_TUN_FD"] = str(fd)
+        environment["PODLAZ_NM_GUEST_TUN_IFINDEX"] = str(index)
+        return subprocess.Popen(
+            (str(candidate), "run", "-c", str(config_file)),
+            stdout=output, stderr=errors, pass_fds=(fd,), env=environment,
+        )
+    finally:
+        os.close(fd)
+
+
 def run_guest(config_file: Path) -> None:
     _is_synthetic_guest()
     if run("nmcli", "-t", "-f", "NAME", "connection", "show",
@@ -138,9 +175,8 @@ def run_guest(config_file: Path) -> None:
             nm_index = _nm_setup(profile_id)
             print("nm-owned-link-and-l3=pass", flush=True)
             stage("xray-attaching")
-            xray = subprocess.Popen(
-                ("/usr/lib/podlaz/xray", "run", "-c", str(config_file)),
-                stdout=output, stderr=errors)
+            xray = start_externally_managed_xray(
+                config_file, nm_index, output, errors)
             # This first gate tests real pinned-Xray TUNSETIFF attachment,
             # not a hypothetical external-fd API.
             for _ in range(75):
