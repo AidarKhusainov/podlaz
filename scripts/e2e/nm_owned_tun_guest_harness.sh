@@ -86,7 +86,7 @@ run_scenario() {
   wait_guest_status clean-inactive 80
   assert_terminal_authority_clean
 
-  mark_failure product tun.nm_owned_feasibility
+  mark_failure capability tun.nm_owned_feasibility
   guest_exec python3 /workspace/scripts/e2e/nm_owned_tun_guest.py \
     "${GUEST_PRIVATE}/nm-owned-generated-xray.json" \
     >"${PRIVATE_ROOT}/nm-owned-result.stdout" 2>"${PRIVATE_ROOT}/nm-owned-result.stderr"
