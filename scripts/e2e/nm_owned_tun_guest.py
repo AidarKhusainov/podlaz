@@ -133,7 +133,7 @@ def inspect_nm_tun_netlink_events(events: str) -> int:
         if "Deleted " in line:
             raise ValueError("NM-owned TUN deleted during Xray lifecycle")
         match = re.fullmatch(
-            r"\\d+:\\s+podlaz0(?:@[^: ]+)?\\s*:\\s*<([^>]*)>.*",
+            r"\d+:\s+podlaz0(?:@[^: ]+)?\s*:\s*<([^>]*)>.*",
             line.strip(),
         )
         if match is None:
