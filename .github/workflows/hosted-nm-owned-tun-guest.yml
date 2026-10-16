@@ -67,6 +67,8 @@ jobs:
             if [[ -f "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" ]]; then
               grep -E '^nm-owned-failure-step=(barrier-armed|underlay-allocated|nm-created|xray-attaching|real-traffic|natural-global-full|xray-release|cleanup-xray|cleanup-nm|cleanup-underlay|cleanup-barrier)$' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
+              grep -Fx 'nm-owned-transient-link-down=observed' \
+                "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
             fi
             printf 'nm-owned-tun-guest=failed\n' >&2
             exit 1
