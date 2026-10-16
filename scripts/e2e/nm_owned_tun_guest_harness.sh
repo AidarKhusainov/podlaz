@@ -21,11 +21,13 @@ EVIDENCE_KEYS=(
   proxy_only.data_plane
   proxy_only.clean_disconnect
   tun.verified_active
+  tun.system_dns
+  tun.https_tls
   tun.nm_owned_link
   tun.xray_attached
   tun.protected_traffic
   tun.natural_full
-  tun.single_owner_release
+  tun.nm_post_xray_active
   tun.terminal_cleanup
   tun.recovery_clean
   guest.baseline_restored
@@ -90,14 +92,14 @@ run_scenario() {
     >"${PRIVATE_ROOT}/nm-owned-result.stdout" 2>"${PRIVATE_ROOT}/nm-owned-result.stderr"
 
   local label
-  for label in nm-owned-link-and-l3 nm-owned-xray-attached nm-owned-protected-traffic nm-owned-natural-full nm-owned-xray-release-safe nm-owned-result; do
+  for label in nm-owned-link-and-l3 nm-owned-xray-attached nm-owned-protected-traffic nm-owned-natural-full nm-owned-nm-post-xray-active nm-owned-result; do
     grep -Fx "${label}=pass" "${PRIVATE_ROOT}/nm-owned-result.stdout" >/dev/null
   done
   record_evidence tun.nm_owned_link pass
   record_evidence tun.xray_attached pass
   record_evidence tun.protected_traffic pass
   record_evidence tun.natural_full pass
-  record_evidence tun.single_owner_release pass
+  record_evidence tun.nm_post_xray_active pass
 
   mark_failure product tun.terminal_cleanup
   assert_terminal_authority_clean
