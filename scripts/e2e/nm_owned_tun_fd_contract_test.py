@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from nm_owned_tun_fd_contract import (
-    TUN_FLAGS, verify_tun_fd_identity, verify_xray_config,
+    TUN_FLAGS, inherited_fd_environment, verify_tun_fd_identity, verify_xray_config,
 )
 
 
@@ -25,6 +25,25 @@ class ExternalFdAdmissionTest(unittest.TestCase):
     def store(self):
         self.path.write_text(json.dumps(self.payload), encoding="utf-8")
         os.chmod(self.path, 0o600)
+
+    def test_external_fd_env_overrides_untrusted_upstream_names(self):
+        inherited = {
+            "xray.tun.fd": "987654321",
+            "XRAY_TUN_FD": "112233",
+            "PODLAZ_NM_GUEST_TUN_FD": "4",
+            "PODLAZ_NM_GUEST_TUN_IFINDEX": "4242",
+            "HOME": "/tmp/qualified",
+        }
+        prepared = inherited_fd_environment(7, inherited)
+        self.assertEqual(prepared["XRAY_TUN_FD"], "7")
+        self.assertEqual(prepared["HOME"], "/tmp/qualified")
+        self.assertNotIn("xray.tun.fd", prepared)
+        self.assertNotIn("PODLAZ_NM_GUEST_TUN_FD", prepared)
+        self.assertNotIn("PODLAZ_NM_GUEST_TUN_IFINDEX", prepared)
+        for invalid in (0, -1, 2, True, "7"):
+            with self.subTest(fd=invalid):
+                with self.assertRaisesRegex(ValueError, "invalid external"):
+                    inherited_fd_environment(invalid, inherited)
 
     def test_single_exact_tun_passes(self):
         verify_xray_config(self.path, ifname="podlaz0", mtu=1500)
