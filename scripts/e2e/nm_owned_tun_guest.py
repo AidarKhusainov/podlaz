@@ -246,17 +246,27 @@ def verify_xray_capabilities(status: str) -> None:
 
 
 def _assert_restricted_xray(xray: subprocess.Popen) -> None:
-    """Attest the actual Xray executable, never the transient setpriv helper."""
+    """Attest Xray (not setpriv), exporting only a closed failure category."""
     expected = "/run/podlaz-synthetic-xray/nm-owned-external-xray"
-    for _ in range(50):
-        if xray.poll() is not None:
-            raise ValueError("Xray stopped before privilege attestation")
-        if os.readlink(f"/proc/{xray.pid}/exe") == expected:
-            status_path = Path(f"/proc/{xray.pid}/status")
-            verify_xray_capabilities(status_path.read_text(encoding="ascii"))
-            return
-        time.sleep(0.05)
-    raise ValueError("privilege attestation did not reach actual Xray executable")
+    try:
+        for _ in range(50):
+            if xray.poll() is not None:
+                raise ValueError("Xray stopped before privilege attestation")
+            if os.readlink(f"/proc/{xray.pid}/exe") == expected:
+                status_path = Path(f"/proc/{xray.pid}/status")
+                verify_xray_capabilities(status_path.read_text(encoding="ascii"))
+                return
+            time.sleep(0.05)
+        raise ValueError("privilege attestation did not reach actual Xray executable")
+    except (OSError, ValueError) as exc:
+        category = {
+            "Xray stopped before privilege attestation": "exited",
+            "Xray capability inventory unavailable": "inventory",
+            "Xray retained network ownership capabilities": "retained-caps",
+            "privilege attestation did not reach actual Xray executable": "wrong-executable",
+        }.get(str(exc), "inspection-error")
+        print("nm-owned-xray-capability-failure=" + category, flush=True)
+        raise
 
 
 def _restricted_xray_argv(config_file: Path) -> tuple[str, ...]:
