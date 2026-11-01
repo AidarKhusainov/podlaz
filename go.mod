@@ -2,7 +2,7 @@ module github.com/AidarKhusainov/podlaz
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/godbus/dbus/v5 v5.2.2
