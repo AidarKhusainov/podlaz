@@ -25,7 +25,9 @@ from nm_vpn_l3_scenario_guest import (
 )
 from nm_vpn_underlay_guest import select_underlay
 from nm_owned_tun_grouped_guest import (FIRST, SECOND, TARGET_PORT, verify_composed_grouped)
-from nm_owned_tun_fd_contract import verify_tun_fd_identity, verify_xray_config
+from nm_owned_tun_fd_contract import (
+    inherited_fd_environment, verify_tun_fd_identity, verify_xray_config,
+)
 
 NAME = "podlaz-guest-nm-owned-tun"
 CURRENT_STEP = "preflight"
@@ -218,11 +220,8 @@ def start_externally_managed_xray(
             before=pre, after=_link(), expected_index=index,
             expected_mtu=pre["mtu"],
         )
-        environment = os.environ.copy()
         # Official upstream Linux openFromEnv contract, NOT the old PoC patch.
-        environment["XRAY_TUN_FD"] = str(fd)
-        environment.pop("PODLAZ_NM_GUEST_TUN_FD", None)
-        environment.pop("PODLAZ_NM_GUEST_TUN_IFINDEX", None)
+        environment = inherited_fd_environment(fd)
         return subprocess.Popen(
             (str(candidate), "run", "-c", str(config_file)),
             stdout=output, stderr=errors, pass_fds=(fd,), env=environment,
@@ -252,8 +251,7 @@ def _prove_invalid_fd_fails_closed(
     """Wrong descriptor must fail rather than falling back to opening a TUN."""
     invalid = os.open("/dev/null", os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
     try:
-        environment = os.environ.copy()
-        environment["XRAY_TUN_FD"] = str(invalid)
+        environment = inherited_fd_environment(invalid)
         process = subprocess.Popen(
             ("/run/podlaz-synthetic-xray/nm-owned-external-xray",
              "run", "-c", str(config_file)),
@@ -275,8 +273,7 @@ def _prove_invalid_fd_fails_closed(
     # A numeric but closed descriptor must also be fatal. Leaving the
     # variable unset would select upstream's self-managed TUN mode and is
     # expressly forbidden by the privileged handoff contract.
-    environment = os.environ.copy()
-    environment["XRAY_TUN_FD"] = str(1 << 29)
+    environment = inherited_fd_environment(1 << 29)
     lost = subprocess.Popen(
         ("/run/podlaz-synthetic-xray/nm-owned-external-xray",
          "run", "-c", str(config_file)),
