@@ -8,7 +8,9 @@ remain armed throughout the lifetime and any replacement attempt.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from collections.abc import Mapping
 
 TUN_NAME = "podlaz0"
 TUN_KIND = "tun"
@@ -18,6 +20,23 @@ FORBIDDEN_TUN_SETTINGS = frozenset({
     "gateway", "autoSystemRoutingTable", "autoSystemDnsToGateway",
     "autoOutboundsInterface",
 })
+
+
+
+def inherited_fd_environment(fd: int, environment: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Use exactly the FD chosen by this trusted parent, not inherited overrides.
+
+    Upstream EnvFlag prioritizes dotted xray.tun.fd over XRAY_TUN_FD.
+    Both spellings must be cleared before installing the explicit validated FD.
+    """
+    if type(fd) is not int or fd < 3:
+        raise ValueError("invalid external TUN descriptor number")
+    result = dict(os.environ if environment is None else environment)
+    for key in ("xray.tun.fd", "XRAY_TUN_FD",
+                "PODLAZ_NM_GUEST_TUN_FD", "PODLAZ_NM_GUEST_TUN_IFINDEX"):
+        result.pop(key, None)
+    result["XRAY_TUN_FD"] = str(fd)
+    return result
 
 
 def verify_xray_config(config_path: Path, *, ifname: str, mtu: int) -> None:
