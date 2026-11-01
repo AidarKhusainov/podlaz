@@ -235,7 +235,7 @@ def start_externally_managed_xray(
 def verify_xray_capabilities(status: str) -> None:
     """The inherited-FD packet engine must never be able to mutate NM L3."""
     for field in ("CapEff", "CapBnd"):
-        values = re.findall(rf"^{field}:\\s*([0-9a-fA-F]+)$", status, re.MULTILINE)
+        values = re.findall(rf"^{field}:\s*([0-9a-fA-F]+)$", status, re.MULTILINE)
         if len(values) != 1:
             raise ValueError("Xray capability inventory unavailable")
         value = int(values[0], 16)
