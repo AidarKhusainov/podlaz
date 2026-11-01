@@ -41,7 +41,9 @@ jobs:
           python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_fd_contract_test.py' -v
           python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_xray_identity_patch_test.py' -v
           python3 -m py_compile scripts/e2e/nm_owned_tun_fd_contract.py scripts/e2e/nm_owned_tun_upstream_contract.py scripts/e2e/nm_owned_tun_xray_identity_patch.py
-      - name: Build unmodified exact upstream Xray
+      - name: Validate final research repository structure
+        run: bash scripts/ci/repository-structure.sh --final
+      - name: Build pinned upstream Xray with guest-only identity extension
         env:
           GOTOOLCHAIN: local
           PINNED_XRAY_COMMIT: a4a3dff5b20c2faae567b742c172c7b95e75c083
