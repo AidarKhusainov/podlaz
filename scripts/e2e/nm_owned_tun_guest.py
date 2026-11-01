@@ -322,8 +322,8 @@ def _exercise_live_nm_restart(
     before_pid = run("systemctl", "show", "-P", "MainPID",
                      "NetworkManager.service", output=True).strip()
     monitor_path = ROOT / "nm-owned-live-nm-link-events.private"
-    with monitor_path.open("w") as events, \\
-         (ROOT / "nm-owned-live-nm-monitor.stderr").open("w") as monitor_errors:
+    with (monitor_path.open("w") as events,
+          (ROOT / "nm-owned-live-nm-monitor.stderr").open("w") as monitor_errors):
         monitor = subprocess.Popen(
             ("ip", "monitor", "link", "dev", "podlaz0"),
             stdout=events, stderr=monitor_errors)
