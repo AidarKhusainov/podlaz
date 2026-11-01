@@ -194,6 +194,95 @@ def start_externally_managed_xray(
         os.close(fd)
 
 
+def _assert_nm_owned_link(profile_id: str) -> int:
+    if not _profile_present(profile_id, active=True):
+        raise ValueError("NM-owned connection not active")
+    link = _link()
+    if "UP" not in link.get("flags", []) or type(link.get("ifindex")) is not int:
+        raise ValueError("NM-owned link not administratively UP")
+    addresses = ip_json("address", "show", "dev", "podlaz0")
+    if len(addresses) != 1 or not any(
+        addr.get("family") == "inet" and addr.get("local") == "198.18.0.17"
+        for addr in addresses[0].get("addr_info", [])
+    ):
+        raise ValueError("NM-owned TUN lost exact L3")
+    return link["ifindex"]
+
+
+def _prove_invalid_fd_fails_closed(
+    config_file: Path, profile_id: str, index: int, output: object, errors: object
+) -> None:
+    """Wrong descriptor must fail rather than falling back to opening a TUN."""
+    invalid = os.open("/dev/null", os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        environment = os.environ.copy()
+        environment["XRAY_TUN_FD"] = str(invalid)
+        process = subprocess.Popen(
+            ("/run/podlaz-synthetic-xray/nm-owned-external-xray",
+             "run", "-c", str(config_file)),
+            stdout=output, stderr=errors, pass_fds=(invalid,), env=environment,
+        )
+        try:
+            code = process.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+            raise ValueError("Xray did not reject invalid inherited TUN FD")
+        if code == 0:
+            raise ValueError("Xray accepted non-TUN inherited descriptor")
+    finally:
+        os.close(invalid)
+    if _assert_nm_owned_link(profile_id) != index:
+        raise ValueError("invalid FD fallback changed NM identity")
+
+
+def _exercise_crash_restart(
+    xray: subprocess.Popen, config_file: Path, profile_id: str,
+    index: int, mark: int, output: object, errors: object,
+) -> tuple[subprocess.Popen, int]:
+    """Deliberate Xray SIGKILL and NM daemon restart under an armed barrier."""
+    stage("xray-crash")
+    xray.kill()
+    if xray.wait(timeout=12) != -9:
+        raise ValueError("Xray SIGKILL did not terminate with signal")
+    if _assert_nm_owned_link(profile_id) != index:
+        raise ValueError("NM TUN replaced on Xray crash")
+    _prove_physical_drop()
+    _prove_ipv6_no_leak()
+    stage("nm-restart")
+    # Saved ONLY in the disposable guest and explicitly removed on teardown.
+    run("systemctl", "restart", "NetworkManager", timeout=50)
+    if not _profile_present(profile_id):
+        raise ValueError("NM-owned UUID lost after NM restart")
+    if not _profile_present(profile_id, active=True):
+        # Explicit reactivation is not evidence for automatic product recovery.
+        run("nmcli", "-w", "45", "connection", "up", profile_id, timeout=50)
+    next_index = _assert_nm_owned_link(profile_id)
+    _prove_physical_drop()
+    _prove_ipv6_no_leak()
+    stage("xray-restart")
+    restarted = start_externally_managed_xray(
+        config_file, next_index, output, errors)
+    try:
+        for _ in range(75):
+            if restarted.poll() is not None:
+                raise ValueError("Xray refused reattached NM TUN")
+            if _assert_nm_owned_link(profile_id) == next_index:
+                break
+            time.sleep(0.2)
+        else:
+            raise ValueError("NM TUN generation not restored")
+        _verify_paths(mark)
+        _prove_physical_drop()
+        _prove_ipv6_no_leak()
+    except Exception:
+        restarted.kill()
+        restarted.wait(timeout=12)
+        raise
+    print("nm-owned-fault-recovery=pass", flush=True)
+    return restarted, next_index
+
+
 def _grouped_peer_counters(mark: int, transport_port: int) -> None:
     """Count exact first and second provider transport peer packets under the barrier."""
     for address, label in ((FIRST, "nm_owned_peer_a"), (SECOND, "nm_owned_peer_b")):
@@ -261,6 +350,9 @@ def run_guest(config_file: Path, *, grouped: bool = False) -> None:
             profile = True
             nm_index = _nm_setup(profile_id)
             print("nm-owned-link-and-l3=pass", flush=True)
+            stage("fd-negative")
+            _prove_invalid_fd_fails_closed(config_file, profile_id, nm_index, output, errors)
+            print("nm-owned-invalid-fd-rejected=pass", flush=True)
             stage("xray-attaching")
             xray = start_externally_managed_xray(
                 config_file, nm_index, output, errors)
@@ -297,6 +389,9 @@ def run_guest(config_file: Path, *, grouped: bool = False) -> None:
             stage("natural-global-full")
             _natural_full(xray)
             print("nm-owned-natural-full=pass", flush=True)
+            xray, nm_index = _exercise_crash_restart(
+                xray, config_file, profile_id, nm_index,
+                plan.tunnel_mark, output, errors)
             stage("xray-release")
             # Catch transient link-down transitions, not only NM's later
             # possibly recovered UP state. This monitor is read-only; all
