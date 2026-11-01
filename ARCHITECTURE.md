@@ -188,14 +188,16 @@ upstream FD path and its owner split remain the baseline; the extension is
 compiled only for disposable guests, never substituted into the package.
 The build pins exact upstream source and rejects drift. Both mismatch
 dimensions are exercised as real negative child-process admissions.
-The guest invokes Xray via `setpriv`, explicitly drops `CAP_NET_ADMIN`
-and `CAP_SYS_ADMIN` from both the effective and bounding capability sets,
-and verifies actual `/proc/<pid>/status` values before accepting the
-data-plane. `CAP_NET_RAW` remains available for marked provider transport.
-This prevents the research Xray process from successfully calling privileged
-link/L3/nftables mutation APIs despite being started by the privileged
-disposable guest parent. It does not establish full unprivileged product
-sandboxing, which still requires separate threat-model review.
+The disposable guest uses a small source-built, non-SUID launcher:
+it drops to the dedicated unprivileged `e2e` UID/GID, clears supplementary
+groups, restricts the bounding set and uses `capset`/ambient capabilities
+before `exec`. Only `CAP_NET_RAW` survives in effective, permitted,
+inheritable, bounding and ambient sets, for marked provider socket traffic.
+The actual Xray PID must exhibit these exact five sets, the unprivileged
+credentials and `NoNewPrivs=1` before protected traffic qualifies. This
+research launcher and patched Xray are never included in the production
+package. Neither capability isolation nor the test's firewall barrier
+establishes an atomic FD-to-NM-ifindex admission or FD revocation contract.
 
 **This is not atomic FD-to-ifindex proof:** privileged link rename,
 replacement and namespace changes can still race the FD-based TUNGETIFF

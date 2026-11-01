@@ -37,14 +37,30 @@ class NMOwnedTunContractTest(unittest.TestCase):
                 _qualified_peer_packets()
 
     def test_external_fd_xray_cannot_retain_privileged_link_writers(self):
-        verify_xray_capabilities("Name:\txray\nCapEff:\t0000000000002000\nCapBnd:\t0000000000002000\n")
-        for bit in (12, 21):
-            with self.subTest(bit=bit):
-                text = f"CapEff:\t{(1 << bit):016x}\nCapBnd:\t{(1 << bit):016x}\n"
-                with self.assertRaisesRegex(ValueError, "ownership capabilities"):
-                    verify_xray_capabilities(text)
-        with self.assertRaisesRegex(ValueError, "unavailable"):
-            verify_xray_capabilities("CapEff: 0\n")
+        raw = 1 << 13
+
+        def status(*, uid=1001, gid=1001, caps=None, nnp=1, groups=""):
+            values = caps or {}
+            lines = ["Name:\txray",
+                     f"Uid:\t{uid}\t{uid}\t{uid}\t{uid}",
+                     f"Gid:\t{gid}\t{gid}\t{gid}\t{gid}",
+                     f"Groups:\t{groups}"]
+            lines += [f"{key}:\t{values.get(key, raw):016x}" for key in
+                      ("CapEff", "CapPrm", "CapInh", "CapBnd", "CapAmb")]
+            return "\n".join(lines + [f"NoNewPrivs:\t{nnp}", ""])
+
+        verify_xray_capabilities(status(), uid=1001, gid=1001)
+        for field in ("CapEff", "CapPrm", "CapInh", "CapBnd", "CapAmb"):
+            for invalid in (0, raw | (1 << 12), raw | (1 << 21)):
+                with self.subTest(field=field, invalid=invalid):
+                    with self.assertRaisesRegex(ValueError, "ownership capabilities"):
+                        verify_xray_capabilities(status(caps={field: invalid}),
+                                                 uid=1001, gid=1001)
+        for payload in (status(uid=0), status(gid=0), status(nnp=0),
+                        status(groups="0"), status().replace("CapAmb:", "Absent:")):
+            with self.subTest(payload=payload[:25]):
+                with self.assertRaises(ValueError):
+                    verify_xray_capabilities(payload, uid=1001, gid=1001)
 
     def test_live_nm_restart_needs_real_pid_change_and_exact_fd_link(self):
         verify_live_nm_restart("123", "456", 9, 9, 1500, 1500, True)

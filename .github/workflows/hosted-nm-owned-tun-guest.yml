@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/hosted-nm-owned-tun-guest.yml'
       - 'scripts/e2e/nm_owned_tun_guest.py'
+      - 'scripts/e2e/nm_owned_tun_restricted_exec.c'
       - 'scripts/e2e/nm_owned_tun_guest_test.py'
       - 'scripts/e2e/nm_owned_tun_guest_harness.sh'
       - 'scripts/e2e/nm_owned_tun_grouped_guest.py'
@@ -63,8 +64,13 @@ jobs:
               -o "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray" ./main
           )
           test -x "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
+          cc -std=c11 -O2 -Wall -Wextra -Werror \
+            -o "${RUNNER_TEMP}/nm-owned-engine/nm-owned-xray-launcher" \
+            scripts/e2e/nm_owned_tun_restricted_exec.c
+          test -x "${RUNNER_TEMP}/nm-owned-engine/nm-owned-xray-launcher"
           test "$(git -C "${RUNNER_TEMP}/xray-source" diff --name-only)" = "proxy/tun/tun_linux.go"
-          sha256sum "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
+          sha256sum "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray" \
+            "${RUNNER_TEMP}/nm-owned-engine/nm-owned-xray-launcher"
       - name: Export guest-only binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -109,9 +115,11 @@ jobs:
           python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_xray_identity_patch_test.py' -v
           python3 -m py_compile scripts/e2e/nm_owned_tun_guest.py scripts/e2e/nm_owned_tun_grouped_guest.py scripts/e2e/nm_owned_tun_fd_contract.py
           bash -n scripts/e2e/nm_owned_tun_guest_harness.sh
-          test -f "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
-          test ! -L "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
-          chmod 0755 "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
+          for binary in nm-owned-external-xray nm-owned-xray-launcher; do
+            test -f "${RUNNER_TEMP}/nm-owned-engine/${binary}"
+            test ! -L "${RUNNER_TEMP}/nm-owned-engine/${binary}"
+            chmod 0755 "${RUNNER_TEMP}/nm-owned-engine/${binary}"
+          done
       - name: Install qualification tools
         run: |
           sudo apt-get update
@@ -142,7 +150,7 @@ jobs:
             if [[ -f "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" ]]; then
               grep -E '^nm-owned-failure-step=(barrier-armed|underlay-allocated|foreign-link-collision|nm-created|fd-negative|identity-collision|child-identity-collision|xray-attaching|xray-capabilities|real-traffic|natural-global-full|live-nm-restart|xray-crash|nm-restart|xray-restart|xray-release|cleanup-xray|cleanup-nm|grouped-independent-outbounds|cleanup-underlay|cleanup-barrier)$' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
-              grep -E '^nm-owned-xray-capability-failure=(exited|inventory|retained-caps|wrong-executable|inspection-error)$' \
+              grep -E '^nm-owned-xray-capability-failure=(exited|inventory|credentials|retained-caps|wrong-executable|inspection-error)$' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
               grep -Fx 'nm-owned-admin-lifecycle-violation=observed' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true

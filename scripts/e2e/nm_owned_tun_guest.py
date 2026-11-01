@@ -9,6 +9,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import pwd
 import re
 import struct
 from pathlib import Path
@@ -232,17 +233,23 @@ def start_externally_managed_xray(
         os.close(fd)
 
 
-def verify_xray_capabilities(status: str) -> None:
-    """The inherited-FD packet engine must never be able to mutate NM L3."""
-    for field in ("CapEff", "CapBnd"):
-        values = re.findall(rf"^{field}:\s*([0-9a-fA-F]+)$", status, re.MULTILINE)
+def verify_xray_capabilities(status: str, *, uid: int, gid: int) -> None:
+    """Only unprivileged Xray with exact CAP_NET_RAW may accept the TUN."""
+    expected = 1 << 13  # SO_MARK, Linux 5.17+: CAP_NET_RAW
+    for field in ("CapEff", "CapPrm", "CapInh", "CapBnd", "CapAmb"):
+        values = re.findall(rf"^{field}:[ \t]*([0-9a-fA-F]+)$", status, re.MULTILINE)
         if len(values) != 1:
             raise ValueError("Xray capability inventory unavailable")
-        value = int(values[0], 16)
-        # CAP_NET_ADMIN (12) can change link/routes/firewall; CAP_SYS_ADMIN
-        # (21) is not justified for an externally owned TUN packet engine.
-        if value & ((1 << 12) | (1 << 21)):
+        if int(values[0], 16) != expected:
             raise ValueError("Xray retained network ownership capabilities")
+    for field, owner in (("Uid", uid), ("Gid", gid)):
+        values = re.findall(rf"^{field}:[ \t]*([0-9 \t]+)$", status, re.MULTILINE)
+        if len(values) != 1 or [int(n) for n in values[0].split()] != [owner] * 4:
+            raise ValueError("Xray restricted credentials unavailable")
+    if not re.search(r"^Groups:[ \t]*$", status, re.MULTILINE):
+        raise ValueError("Xray restricted credentials unavailable")
+    if not re.search(r"^NoNewPrivs:[ \t]*1$", status, re.MULTILINE):
+        raise ValueError("Xray restricted credentials unavailable")
 
 
 def _assert_restricted_xray(xray: subprocess.Popen) -> None:
@@ -254,7 +261,11 @@ def _assert_restricted_xray(xray: subprocess.Popen) -> None:
                 raise ValueError("Xray stopped before privilege attestation")
             if os.readlink(f"/proc/{xray.pid}/exe") == expected:
                 status_path = Path(f"/proc/{xray.pid}/status")
-                verify_xray_capabilities(status_path.read_text(encoding="ascii"))
+                user = pwd.getpwnam("e2e")
+                verify_xray_capabilities(status_path.read_text(encoding="ascii"),
+                                         uid=user.pw_uid, gid=user.pw_gid)
+                if xray.poll() is not None or os.readlink(f"/proc/{xray.pid}/exe") != expected:
+                    raise ValueError("Xray stopped before privilege attestation")
                 return
             time.sleep(0.05)
         raise ValueError("privilege attestation did not reach actual Xray executable")
@@ -262,6 +273,7 @@ def _assert_restricted_xray(xray: subprocess.Popen) -> None:
         category = {
             "Xray stopped before privilege attestation": "exited",
             "Xray capability inventory unavailable": "inventory",
+            "Xray restricted credentials unavailable": "credentials",
             "Xray retained network ownership capabilities": "retained-caps",
             "privilege attestation did not reach actual Xray executable": "wrong-executable",
         }.get(str(exc), "inspection-error")
@@ -270,12 +282,10 @@ def _assert_restricted_xray(xray: subprocess.Popen) -> None:
 
 
 def _restricted_xray_argv(config_file: Path) -> tuple[str, ...]:
-    # setpriv execs the binary in place; the PID used for CapEff assertions
-    # is therefore the actual Xray process. CAP_NET_RAW stays available for
-    # marked provider transport, but CAP_NET_ADMIN / SYS_ADMIN are denied.
+    # Guest-only non-SUID launcher drops UID/GID and all but CAP_NET_RAW.
+    # It execs the actual Xray binary in the same PID.
     return (
-        "setpriv", "--bounding-set=-net_admin,-sys_admin",
-        "--no-new-privs",
+        "/run/podlaz-synthetic-xray/nm-owned-xray-launcher",
         "/run/podlaz-synthetic-xray/nm-owned-external-xray",
         "run", "-c", str(config_file),
     )

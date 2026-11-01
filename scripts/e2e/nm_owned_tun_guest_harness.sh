@@ -104,6 +104,10 @@ run_scenario() {
      -x "${PODLAZ_NM_EXTERNAL_XRAY_BINARY}" &&
      ! -L "${PODLAZ_NM_EXTERNAL_XRAY_BINARY}" ]] || fail "missing pinned guest-only external TUN engine"
   install -m 0755 "${PODLAZ_NM_EXTERNAL_XRAY_BINARY}" "${XRAY_ROOT}/nm-owned-external-xray"
+  local launcher="${PODLAZ_NM_EXTERNAL_XRAY_BINARY%/*}/nm-owned-xray-launcher"
+  [[ -f "${launcher}" && -x "${launcher}" && ! -L "${launcher}" ]] ||
+    fail "missing pinned guest-only restricted launcher"
+  install -m 0755 "${launcher}" "${XRAY_ROOT}/nm-owned-xray-launcher"
   install_tun_authorization
   mark_failure diagnostic_unknown profile.import
   guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-synthetic-xray/client-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz import \"\${URI}\" >${GUEST_PRIVATE}/import.stdout 2>${GUEST_PRIVATE}/import.stderr"
@@ -158,6 +162,9 @@ run_scenario() {
     guest_config="${GUEST_PRIVATE}/nm-owned-grouped-xray.json"
   fi
 
+  # After the packaged-product acceptance, expose only this disposable
+  # guest's private generated config to the unprivileged research Xray.
+  guest_exec chown e2e:e2e "${guest_config}"
   mark_failure capability tun.nm_owned_feasibility
   guest_exec python3 /workspace/scripts/e2e/nm_owned_tun_guest.py \
     "${guest_config}" "${PODLAZ_E2E_NM_TUN_PROFILE}" \
