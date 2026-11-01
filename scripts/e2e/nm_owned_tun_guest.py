@@ -25,6 +25,7 @@ from nm_vpn_l3_scenario_guest import (
 )
 from nm_vpn_underlay_guest import select_underlay
 from nm_owned_tun_grouped_guest import (FIRST, SECOND, TARGET_PORT, verify_composed_grouped)
+from nm_owned_tun_fd_contract import verify_tun_fd_identity, verify_xray_config
 
 NAME = "podlaz-guest-nm-owned-tun"
 CURRENT_STEP = "preflight"
@@ -71,7 +72,7 @@ def _link() -> dict:
 def _nm_setup(profile_id: str) -> int:
     # All addresses, DNS, routes and link creation belong to NM, never Xray
     # or the Podlaz product daemon. This profile is ephemeral in the guest.
-    run("nmcli", "connection", "add", "save", "no", "type", "tun",
+    run("nmcli", "connection", "add", "save", "yes", "type", "tun",
         "con-name", NAME, "ifname", "podlaz0",
         "connection.uuid", profile_id, "connection.autoconnect", "no",
         "tun.mode", "tun", "tun.pi", "no",
@@ -161,6 +162,8 @@ def start_externally_managed_xray(
         raise ValueError("missing isolated external-TUN Xray test binary")
     if type(index) is not int or index <= 0 or _link().get("ifindex") != index:
         raise ValueError("stale NM-owned TUN identity before FD handoff")
+    pre = _link()
+    verify_xray_config(config_file, ifname=pre["ifname"], mtu=pre["mtu"])
     fd = os.open("/dev/net/tun", os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
     try:
         # Linux amd64 ifreq: IFNAMSIZ=16, flags IFF_TUN|IFF_NO_PI.
@@ -169,11 +172,20 @@ def start_externally_managed_xray(
         fcntl.ioctl(fd, 0x400454ca, request, True)
         if request[:16].split(b"\x00", 1)[0] != b"podlaz0":
             raise ValueError("external FD attached to another interface")
-        if _link().get("ifindex") != index:
-            raise ValueError("NM-owned TUN changed during FD handoff")
+        inspected = bytearray(40)
+        fcntl.ioctl(fd, 0x800454d2, inspected, True)  # TUNGETIFF
+        fd_name = inspected[:16].split(b"\\x00", 1)[0].decode("ascii")
+        fd_flags = struct.unpack_from("H", inspected, 16)[0]
+        verify_tun_fd_identity(
+            name=fd_name, flags=fd_flags, expected_name="podlaz0",
+            before=pre, after=_link(), expected_index=index,
+            expected_mtu=pre["mtu"],
+        )
         environment = os.environ.copy()
-        environment["PODLAZ_NM_GUEST_TUN_FD"] = str(fd)
-        environment["PODLAZ_NM_GUEST_TUN_IFINDEX"] = str(index)
+        # Official upstream Linux openFromEnv contract, NOT the old PoC patch.
+        environment["XRAY_TUN_FD"] = str(fd)
+        environment.pop("PODLAZ_NM_GUEST_TUN_FD", None)
+        environment.pop("PODLAZ_NM_GUEST_TUN_IFINDEX", None)
         return subprocess.Popen(
             (str(candidate), "run", "-c", str(config_file)),
             stdout=output, stderr=errors, pass_fds=(fd,), env=environment,
