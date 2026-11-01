@@ -50,6 +50,22 @@ class ExternalFdAdmissionTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly one"):
             verify_xray_config(self.path, ifname="podlaz0", mtu=1500)
 
+    def test_casefolded_xray_mutator_aliases_fail_closed(self):
+        self.payload["inbounds"][0]["settings"]["Gateway"] = ["198.18.0.1/32"]
+        self.store()
+        with self.assertRaisesRegex(ValueError, "must not manage"):
+            verify_xray_config(self.path, ifname="podlaz0", mtu=1500)
+        del self.payload["inbounds"][0]["settings"]["Gateway"]
+        self.store()
+        # A second case-folded spelling would be ambiguous to the upstream
+        # JSON decoder even if an earlier canonical value looked harmless.
+        source = self.path.read_text(encoding="utf-8")
+        source = source.replace('"MTU": 1500', '"MTU": 1500, "mtu": 1400')
+        self.assertNotEqual(source, self.path.read_text(encoding="utf-8"))
+        self.path.write_text(source, encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            verify_xray_config(self.path, ifname="podlaz0", mtu=1500)
+
     def test_unsafe_file_rejected(self):
         os.chmod(self.path, 0o644)
         with self.assertRaisesRegex(ValueError, "private"):
