@@ -11,6 +11,9 @@ on:
       - 'scripts/e2e/nm_owned_tun_grouped_guest_test.py'
       - 'scripts/e2e/nm_owned_tun_xray_patch.py'
       - 'scripts/e2e/nm_owned_tun_xray_patch_test.py'
+      - 'scripts/e2e/nm_owned_tun_fd_contract.py'
+      - 'scripts/e2e/nm_owned_tun_fd_contract_test.py'
+      - 'scripts/e2e/nm_owned_tun_upstream_contract.py'
   workflow_dispatch:
 
 permissions:
@@ -18,7 +21,7 @@ permissions:
 
 jobs:
   guest-only-xray:
-    name: Build pinned Xray inherited-FD prototype
+    name: Build official upstream Linux inherited-FD Xray
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -29,23 +32,22 @@ jobs:
       - name: Setup pinned Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: go.mod
-          cache: true
-      - name: Validate fail-closed source patch
+          go-version: '1.27'
+          cache: false
+      - name: Validate external FD admission contracts
         run: |
-          python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_xray_patch_test.py' -v
-          python3 -m py_compile scripts/e2e/nm_owned_tun_xray_patch.py
-      - name: Build separate upstream Xray prototype
+          python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_fd_contract_test.py' -v
+          python3 -m py_compile scripts/e2e/nm_owned_tun_fd_contract.py scripts/e2e/nm_owned_tun_upstream_contract.py
+      - name: Build unmodified exact upstream Xray
         env:
           GOTOOLCHAIN: local
-          PINNED_XRAY_COMMIT: d2758a023cd7f4174a5a5fa4ff66e487d4342ba0
+          PINNED_XRAY_COMMIT: a4a3dff5b20c2faae567b742c172c7b95e75c083
         run: |
           set -Eeuo pipefail
-          git clone --depth 1 --branch v26.3.27 --single-branch \
+          git clone --depth 1 --branch v26.10.31 --single-branch \
             https://github.com/XTLS/Xray-core.git "${RUNNER_TEMP}/xray-source"
           test "$(git -C "${RUNNER_TEMP}/xray-source" rev-parse HEAD)" = "${PINNED_XRAY_COMMIT}"
-          python3 scripts/e2e/nm_owned_tun_xray_patch.py "${RUNNER_TEMP}/xray-source"
-          gofmt -w "${RUNNER_TEMP}/xray-source/proxy/tun/tun_linux.go"
+          python3 scripts/e2e/nm_owned_tun_upstream_contract.py "${RUNNER_TEMP}/xray-source"
           mkdir -p "${RUNNER_TEMP}/nm-owned-engine"
           (
             cd "${RUNNER_TEMP}/xray-source"
@@ -53,6 +55,7 @@ jobs:
               -o "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray" ./main
           )
           test -x "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
+          test "$(git -C "${RUNNER_TEMP}/xray-source" status --porcelain | wc -l)" -eq 0
           sha256sum "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
       - name: Export guest-only binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -94,8 +97,8 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_guest_test.py' -v
           python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_grouped_guest_test.py' -v
-          python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_xray_patch_test.py' -v
-          python3 -m py_compile scripts/e2e/nm_owned_tun_guest.py scripts/e2e/nm_owned_tun_grouped_guest.py scripts/e2e/nm_owned_tun_xray_patch.py
+          python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_fd_contract_test.py' -v
+          python3 -m py_compile scripts/e2e/nm_owned_tun_guest.py scripts/e2e/nm_owned_tun_grouped_guest.py scripts/e2e/nm_owned_tun_fd_contract.py
           bash -n scripts/e2e/nm_owned_tun_guest_harness.sh
           test -f "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
           test ! -L "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
