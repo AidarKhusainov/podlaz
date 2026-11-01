@@ -138,6 +138,44 @@ churn, crash/boot recovery or all-profile option-B completion. Never ship
 the guest-modified Xray binary as a silent package dependency or claim that
 an ordinary NM `tun` profile is an NM VPN Plugin.
 
+**Upstream Linux FD qualification direction (2026-11-01; separate research
+branch, no product decision).** The upstream Xray-core stable release
+[v26.10.31](https://github.com/XTLS/Xray-core/releases/tag/v26.10.31)
+(exact commit `a4a3dff5b20c2faae567b742c172c7b95e75c083`) now has an
+unmodified Linux `openFromEnv` implementation for `XRAY_TUN_FD`. That path
+checks `TUNGETIFF` type, packet mode and interface name, uses an inherited
+packet FD, and does not take `ownsTun` ownership. The owning path still
+manages MTU/link/L3; the inherited path bypasses `setup` and `Start` link
+mutation. `Close` gates link DOWN on `ownsTun`. The upstream
+[README](https://github.com/XTLS/Xray-core/blob/v26.10.31/proxy/tun/README.md)
+documents the inherited-FD variable for mobile platforms; a **stable
+Linux external-link ownership API with exact ifindex/MTU semantics has not
+been expressly promised there**. Do not infer a product compatibility
+guarantee merely from shipped source code.
+
+The separate guest-only qualification builds the **unmodified**, exact
+upstream source using its Go 1.27 toolchain, without touching the pinned
+Podlaz package Xray or Go toolchain. A private caller opens a pre-existing
+NM-created TUN and verifies its `TUNGETIFF` name/type and NM ifindex,
+MTU and administrative UP before passing only that FD to Xray. It rejects
+Xray TUN settings authorizing gateway/address, routing or host DNS
+mutation. The firewall/policy privacy barrier remains armed across normal
+close, SIGKILL, rejected FD and explicit NM/Xray restart/rebind. The test
+must prove real encrypted DNS/HTTPS and separate grouped outbound transport;
+source-level guards and negative unit tests alone are not runtime evidence.
+
+**Unresolved boundary:** Linux upstream `openFromEnv` does not atomically
+compare an expected ifindex/MTU against the supplied descriptor in the
+Xray process. Preflight/rechecking by a separate process is subject to
+a rename/replacement/FD-lifetime race; a host privacy barrier protects
+egress but cannot turn that into atomic attachment identity. Kernel FD
+revocation or transparent automatic NM/daemon boot recovery are likewise
+not proved by a SIGKILL/restart fixture. Before production selection,
+obtain upstream Linux lifecycle contract/acceptance or maintain a
+version-pinned, explicitly reviewed Xray extension carrying an expected
+identity into in-process FD inspection. Until then keep the approach
+research-only and opt-in Gate B blocked; no upstream fork is shipped.
+
 Any future implementation has one writer per resource: NetworkManager for
 delegated link L3, DNS and VPN/device activation where applicable; Podlaz for
 boot-ID-scoped session intent, Privacy Envelope, firewall/policy protection,
