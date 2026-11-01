@@ -222,6 +222,8 @@ def start_externally_managed_xray(
         )
         # Official upstream Linux openFromEnv contract, NOT the old PoC patch.
         environment = inherited_fd_environment(fd)
+        environment["PODLAZ_RESEARCH_TUN_IFINDEX"] = str(index)
+        environment["PODLAZ_RESEARCH_TUN_MTU"] = str(pre["mtu"])
         return subprocess.Popen(
             (str(candidate), "run", "-c", str(config_file)),
             stdout=output, stderr=errors, pass_fds=(fd,), env=environment,
@@ -425,6 +427,48 @@ def _exercise_crash_restart(
     return restarted, next_index
 
 
+def _prove_child_in_process_identity_rejection(
+    config_file: Path, profile_id: str, index: int,
+    output: object, errors: object,
+) -> None:
+    """Actual patched Xray must fail before packet startup for wrong owner IDs."""
+    for dimension in ("ifindex", "mtu"):
+        if _assert_nm_owned_link(profile_id) != index:
+            raise ValueError("NM identity lost before child collision probe")
+        original = _link()
+        fd = os.open("/dev/net/tun", os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
+        try:
+            request = bytearray(struct.pack("16sH22x", b"podlaz0", 0x0001 | 0x1000))
+            fcntl.ioctl(fd, 0x400454ca, request, True)
+            if request[:16].split(bytes([0]), 1)[0] != b"podlaz0":
+                raise ValueError("identity test FD not attached to NM TUN")
+            environment = inherited_fd_environment(fd)
+            environment["PODLAZ_RESEARCH_TUN_IFINDEX"] = str(
+                index + (1 if dimension == "ifindex" else 0))
+            environment["PODLAZ_RESEARCH_TUN_MTU"] = str(
+                original["mtu"] + (1 if dimension == "mtu" else 0))
+            child = subprocess.Popen(
+                ("/run/podlaz-synthetic-xray/nm-owned-external-xray",
+                 "run", "-c", str(config_file)),
+                stdout=output, stderr=errors, pass_fds=(fd,), env=environment,
+            )
+            try:
+                status = child.wait(timeout=25)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=12)
+                raise ValueError("Xray accepted mismatched in-process identity")
+            if status == 0:
+                raise ValueError("Xray accepted wrong expected TUN identity")
+        finally:
+            os.close(fd)
+        if _assert_nm_owned_link(profile_id) != index or _link()["mtu"] != original["mtu"]:
+            raise ValueError("in-process identity rejection damaged NM link")
+        _prove_physical_drop()
+        _prove_ipv6_no_leak()
+    print("nm-owned-child-identity-rejected=pass", flush=True)
+
+
 def _grouped_peer_counters(mark: int, transport_port: int) -> None:
     """Count exact first and second provider transport peer packets under the barrier."""
     for address, label in ((FIRST, "nm_owned_peer_a"), (SECOND, "nm_owned_peer_b")):
@@ -510,6 +554,9 @@ def run_guest(config_file: Path, *, grouped: bool = False) -> None:
             if _assert_nm_owned_link(profile_id) != nm_index:
                 raise ValueError("identity collision changed NM link")
             print("nm-owned-identity-collision-rejected=pass", flush=True)
+            stage("child-identity-collision")
+            _prove_child_in_process_identity_rejection(
+                config_file, profile_id, nm_index, output, errors)
             stage("xray-attaching")
             xray = start_externally_managed_xray(
                 config_file, nm_index, output, errors)

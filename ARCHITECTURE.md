@@ -178,6 +178,23 @@ version-pinned, explicitly reviewed Xray extension carrying an expected
 identity into in-process FD inspection. Until then keep the approach
 research-only and opt-in Gate B blocked; no upstream fork is shipped.
 
+**Separate in-process identity extension research (2026-11-01; not upstream
+API).** An additional stacked Draft PR tests a source-anchored, exact-version
+Linux-only patch to the already upstream-supported inherited-FD path. The
+guest-modified Xray requires explicit expected ifindex and MTU *inside Xray*,
+reads netlink identity and administrative UP, re-inspects TUNGETIFF and rejects
+wrong expected values before creating the packet engine. The unchanged
+upstream FD path and its owner split remain the baseline; the extension is
+compiled only for disposable guests, never substituted into the package.
+The build pins exact upstream source and rejects drift. Both mismatch
+dimensions are exercised as real negative child-process admissions.
+**This is not atomic FD-to-ifindex proof:** privileged link rename,
+replacement and namespace changes can still race the FD-based TUNGETIFF
+name lookup and netlink read. Until kernel-supported or upstream-reviewed
+guarantees and a privilege-limited supervisor fully eliminate the unsafe
+window, this extension cannot justify production adoption. Future upstream
+revision requires rebase, review, full guest matrix and independent evidence.
+
 Any future implementation has one writer per resource: NetworkManager for
 delegated link L3, DNS and VPN/device activation where applicable; Podlaz for
 boot-ID-scoped session intent, Privacy Envelope, firewall/policy protection,
