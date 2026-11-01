@@ -73,8 +73,10 @@ class ExternalFdAdmissionTest(unittest.TestCase):
                     check(link, bad)
         with self.assertRaisesRegex(ValueError, "not an"):
             check(link, link, flags=0)
-        with self.assertRaisesRegex(ValueError, "packet mode"):
-            check(link, link, flags=TUN_FLAGS | 0x4000)
+        for extra_flag in (0x0100, 0x4000):
+            with self.subTest(flag=extra_flag):
+                with self.assertRaisesRegex(ValueError, "packet mode"):
+                    check(link, link, flags=TUN_FLAGS | extra_flag)
 
 
 if __name__ == "__main__":
