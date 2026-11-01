@@ -24,7 +24,21 @@ def verify_xray_config(config_path: Path, *, ifname: str, mtu: int) -> None:
     if (config_path.is_symlink() or not config_path.is_file()
             or config_path.stat().st_mode & 0o077):
         raise ValueError("Xray configuration must be a private regular file")
-    config = json.loads(config_path.read_text(encoding="utf-8"))
+    # Xray's JSON decoder tolerates case-insensitive field aliases; accepting
+    # ambiguous duplicate keys here could bypass the preflight mutator guard.
+    def unique_keys(pairs: list[tuple[str, object]]) -> dict:
+        keys: set[str] = set()
+        result: dict = {}
+        for key, value in pairs:
+            folded = key.casefold()
+            if folded in keys:
+                raise ValueError("ambiguous Xray JSON field aliases")
+            keys.add(folded)
+            result[key] = value
+        return result
+
+    config = json.loads(config_path.read_text(encoding="utf-8"),
+                        object_pairs_hook=unique_keys)
     if not isinstance(config, dict) or not isinstance(config.get("inbounds"), list):
         raise ValueError("invalid Xray inbound configuration")
     tun = [entry for entry in config["inbounds"]
@@ -40,7 +54,7 @@ def verify_xray_config(config_path: Path, *, ifname: str, mtu: int) -> None:
         raise ValueError("invalid exact TUN MTU")
     if settings["MTU"] != mtu:
         raise ValueError("NM TUN MTU mismatch")
-    if FORBIDDEN_TUN_SETTINGS.intersection(settings):
+    if {key.casefold() for key in FORBIDDEN_TUN_SETTINGS}.intersection(\n            key.casefold() for key in settings):
         raise ValueError("Xray must not manage NM link, routes or system DNS")
     # Never let an unrecognized second TUN inbound silently create another link.
     if any(not isinstance(entry, dict) for entry in config["inbounds"]):
