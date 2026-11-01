@@ -235,6 +235,26 @@ def _prove_invalid_fd_fails_closed(
     if _assert_nm_owned_link(profile_id) != index:
         raise ValueError("invalid FD fallback changed NM identity")
 
+    # A numeric but closed descriptor must also be fatal. Leaving the
+    # variable unset would select upstream's self-managed TUN mode and is
+    # expressly forbidden by the privileged handoff contract.
+    environment = os.environ.copy()
+    environment["XRAY_TUN_FD"] = str(1 << 29)
+    lost = subprocess.Popen(
+        ("/run/podlaz-synthetic-xray/nm-owned-external-xray",
+         "run", "-c", str(config_file)),
+        stdout=output, stderr=errors, env=environment, close_fds=True,
+    )
+    try:
+        code = lost.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        lost.kill()
+        lost.wait(timeout=10)
+        raise ValueError("Xray did not reject missing inherited descriptor")
+    if code == 0 or _assert_nm_owned_link(profile_id) != index:
+        raise ValueError("lost external TUN FD was not fail-closed")
+    print("nm-owned-lost-fd-rejected=pass", flush=True)
+
 
 def _exercise_crash_restart(
     xray: subprocess.Popen, config_file: Path, profile_id: str,
@@ -353,6 +373,18 @@ def run_guest(config_file: Path, *, grouped: bool = False) -> None:
             stage("fd-negative")
             _prove_invalid_fd_fails_closed(config_file, profile_id, nm_index, output, errors)
             print("nm-owned-invalid-fd-rejected=pass", flush=True)
+            stage("identity-collision")
+            try:
+                start_externally_managed_xray(
+                    config_file, nm_index + 1, output, errors)
+            except ValueError as exc:
+                if "stale NM-owned TUN identity" not in str(exc):
+                    raise
+            else:
+                raise ValueError("stale TUN ifindex collision accepted")
+            if _assert_nm_owned_link(profile_id) != nm_index:
+                raise ValueError("identity collision changed NM link")
+            print("nm-owned-identity-collision-rejected=pass", flush=True)
             stage("xray-attaching")
             xray = start_externally_managed_xray(
                 config_file, nm_index, output, errors)
