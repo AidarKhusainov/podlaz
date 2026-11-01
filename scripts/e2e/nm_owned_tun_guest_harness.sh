@@ -108,6 +108,9 @@ run_scenario() {
   [[ -f "${launcher}" && -x "${launcher}" && ! -L "${launcher}" ]] ||
     fail "missing pinned guest-only restricted launcher"
   install -m 0755 "${launcher}" "${XRAY_ROOT}/nm-owned-xray-launcher"
+  # The outer private parent remains 0700. Permit e2e to traverse only
+  # the guest read-only bind root; fixture secrets remain root-owned 0600.
+  chmod 0711 "${XRAY_ROOT}"
   install_tun_authorization
   mark_failure diagnostic_unknown profile.import
   guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-synthetic-xray/client-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz import \"\${URI}\" >${GUEST_PRIVATE}/import.stdout 2>${GUEST_PRIVATE}/import.stderr"
