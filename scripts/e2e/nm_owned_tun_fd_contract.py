@@ -54,7 +54,8 @@ def verify_xray_config(config_path: Path, *, ifname: str, mtu: int) -> None:
         raise ValueError("invalid exact TUN MTU")
     if settings["MTU"] != mtu:
         raise ValueError("NM TUN MTU mismatch")
-    if {key.casefold() for key in FORBIDDEN_TUN_SETTINGS}.intersection(\n            key.casefold() for key in settings):
+    if {key.casefold() for key in FORBIDDEN_TUN_SETTINGS}.intersection(
+            key.casefold() for key in settings):
         raise ValueError("Xray must not manage NM link, routes or system DNS")
     # Never let an unrecognized second TUN inbound silently create another link.
     if any(not isinstance(entry, dict) for entry in config["inbounds"]):
