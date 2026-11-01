@@ -70,6 +70,8 @@ def _link() -> dict:
 
 
 def _nm_setup(profile_id: str) -> int:
+    if Path("/sys/class/net/podlaz0").exists():
+        raise ValueError("foreign TUN/link name collision")
     # All addresses, DNS, routes and link creation belong to NM, never Xray
     # or the Podlaz product daemon. This profile is ephemeral in the guest.
     run("nmcli", "connection", "add", "save", "yes", "type", "tun",
@@ -95,6 +97,41 @@ def _nm_setup(profile_id: str) -> int:
     ):
         raise ValueError("NM did not configure the exact TUN L3 address")
     return link["ifindex"]
+
+
+def _probe_foreign_link_collision() -> None:
+    """Do not adopt/replace a conflicting foreign link of the same name."""
+    if Path("/sys/class/net/podlaz0").exists():
+        raise ValueError("preexisting foreign link cannot be adopted")
+    run("ip", "link", "add", "name", "podlaz0", "type", "dummy")
+    foreign = ip_json("-d", "link", "show", "dev", "podlaz0")
+    if len(foreign) != 1 or foreign[0].get("linkinfo", {}).get("info_kind") != "dummy":
+        raise ValueError("collision fixture identity unknown")
+    identity = foreign[0].get("ifindex")
+    if type(identity) is not int or identity <= 0:
+        raise ValueError("collision fixture ifindex unavailable")
+    try:
+        probe_uuid = str(uuid.uuid4())
+        try:
+            _nm_setup(probe_uuid)
+        except ValueError as exc:
+            if "foreign TUN/link name collision" not in str(exc):
+                raise
+        else:
+            raise ValueError("foreign link silently adopted by NM")
+        if _profile_present(probe_uuid):
+            raise ValueError("foreign link collision left an NM connection")
+        after = ip_json("-d", "link", "show", "dev", "podlaz0")
+        if (len(after) != 1 or after[0].get("ifindex") != identity
+                or after[0].get("linkinfo", {}).get("info_kind") != "dummy"):
+            raise ValueError("foreign collision identity not preserved")
+    finally:
+        # Delete only the exact synthetic link created by THIS test.
+        current = ip_json("-d", "link", "show", "dev", "podlaz0")
+        if (len(current) != 1 or current[0].get("ifindex") != identity
+                or current[0].get("linkinfo", {}).get("info_kind") != "dummy"):
+            raise ValueError("refusing cleanup of non-owned collision link")
+        run("ip", "link", "del", "dev", "podlaz0")
 
 
 def _cleanup_underlay(plan: object) -> None:
@@ -366,6 +403,9 @@ def run_guest(config_file: Path, *, grouped: bool = False) -> None:
             stage("underlay-allocated")
             _start_underlay(plan)
             underlay = True
+            stage("foreign-link-collision")
+            _probe_foreign_link_collision()
+            print("nm-owned-foreign-link-collision=pass", flush=True)
             stage("nm-created")
             profile = True
             nm_index = _nm_setup(profile_id)
