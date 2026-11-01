@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 from nm_owned_tun_guest import (_qualified_peer_packets,
                                 inspect_nm_tun_netlink_events,
-                                verify_attached_tun, verify_nm_survives_xray_exit)
+                                verify_attached_tun, verify_nm_survives_xray_exit,
+                                verify_live_nm_restart)
 
 
 class NMOwnedTunContractTest(unittest.TestCase):
@@ -33,6 +34,20 @@ class NMOwnedTunContractTest(unittest.TestCase):
                    return_value=json.dumps({"nftables": [entry]})):
             with self.assertRaisesRegex(ValueError, "missing"):
                 _qualified_peer_packets()
+
+    def test_live_nm_restart_needs_real_pid_change_and_exact_fd_link(self):
+        verify_live_nm_restart("123", "456", 9, 9, 1500, 1500, True)
+        for before_pid, after_pid, index, mtu, running, reason in (
+            ("123", "123", 9, 1500, True, "PID"),
+            ("0", "456", 9, 1500, True, "PID"),
+            ("123", "456", 10, 1500, True, "identity"),
+            ("123", "456", 9, 1400, True, "identity"),
+            ("123", "456", 9, 1500, False, "Xray exited"),
+        ):
+            with self.subTest(case=reason):
+                with self.assertRaisesRegex(ValueError, reason):
+                    verify_live_nm_restart(before_pid, after_pid, 9, index,
+                                           1500, mtu, running)
 
     def test_same_existing_tun_identity_is_required(self):
         verify_attached_tun(12, 12, True)

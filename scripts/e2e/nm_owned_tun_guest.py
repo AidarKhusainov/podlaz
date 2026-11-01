@@ -290,6 +290,83 @@ def _prove_invalid_fd_fails_closed(
     print("nm-owned-lost-fd-rejected=pass", flush=True)
 
 
+def verify_live_nm_restart(
+    before_pid: str, after_pid: str, exact_index: int, actual_index: int,
+    exact_mtu: int, actual_mtu: int, xray_running: bool,
+) -> None:
+    if not xray_running:
+        raise ValueError("Xray exited during live NM restart")
+    if (not before_pid.isdecimal() or int(before_pid) <= 0
+            or not after_pid.isdecimal() or int(after_pid) <= 0
+            or before_pid == after_pid):
+        raise ValueError("NetworkManager PID not replaced")
+    if (type(actual_index) is not int or actual_index != exact_index
+            or type(actual_mtu) is not int or actual_mtu != exact_mtu):
+        raise ValueError("live NM restart replaced the attached TUN identity or MTU")
+
+
+def _exercise_live_nm_restart(
+    xray: subprocess.Popen, profile_id: str, index: int, mark: int,
+) -> None:
+    """Restart NetworkManager while Xray still owns its inherited packet FD.
+
+    A recreated device under the same name is NOT a valid reattachment; no
+    second FD may be opened during this phase, and the barrier stays armed.
+    """
+    stage("live-nm-restart")
+    if xray.poll() is not None or _assert_nm_owned_link(profile_id) != index:
+        raise ValueError("live NM restart requires original active Xray/TUN")
+    before_mtu = _link().get("mtu")
+    if type(before_mtu) is not int or before_mtu <= 0:
+        raise ValueError("unknown pre-restart NM TUN MTU")
+    before_pid = run("systemctl", "show", "-P", "MainPID",
+                     "NetworkManager.service", output=True).strip()
+    monitor_path = ROOT / "nm-owned-live-nm-link-events.private"
+    with monitor_path.open("w") as events, \\
+         (ROOT / "nm-owned-live-nm-monitor.stderr").open("w") as monitor_errors:
+        monitor = subprocess.Popen(
+            ("ip", "monitor", "link", "dev", "podlaz0"),
+            stdout=events, stderr=monitor_errors)
+        try:
+            time.sleep(0.5)
+            if monitor.poll() is not None:
+                raise ValueError("live NM netlink observer unavailable")
+            run("systemctl", "restart", "NetworkManager", timeout=50)
+            # Permit bounded NM service initialization, never link recreation.
+            for _ in range(80):
+                if xray.poll() is not None:
+                    raise ValueError("Xray exited while NM restarted")
+                current = _link()
+                if (current.get("ifindex") != index
+                        or current.get("mtu") != before_mtu
+                        or "UP" not in current.get("flags", [])):
+                    raise ValueError("live NM restart replaced the exact TUN")
+                if _profile_present(profile_id, active=True):
+                    break
+                time.sleep(0.5)
+            else:
+                raise ValueError("NM did not retain the original active UUID")
+            time.sleep(0.5)
+        finally:
+            if monitor.poll() is None:
+                monitor.terminate()
+                monitor.wait(timeout=5)
+    inspect_nm_tun_netlink_events(monitor_path.read_text(encoding="utf-8"))
+    after_pid = run("systemctl", "show", "-P", "MainPID",
+                    "NetworkManager.service", output=True).strip()
+    current = _link()
+    verify_live_nm_restart(before_pid, after_pid, index, current.get("ifindex"),
+                           before_mtu, current.get("mtu"), xray.poll() is None)
+    if _assert_nm_owned_link(profile_id) != index:
+        raise ValueError("live NM restart lost exact L3/UUID")
+    _verify_paths(mark)
+    _prove_physical_drop()
+    _prove_ipv6_no_leak()
+    # Fresh natural connectivity period after the real NM daemon replacement.
+    _natural_full(xray)
+    print("nm-owned-live-nm-restart=pass", flush=True)
+
+
 def _exercise_crash_restart(
     xray: subprocess.Popen, config_file: Path, profile_id: str,
     index: int, mark: int, output: object, errors: object,
@@ -469,6 +546,7 @@ def run_guest(config_file: Path, *, grouped: bool = False) -> None:
             stage("natural-global-full")
             _natural_full(xray)
             print("nm-owned-natural-full=pass", flush=True)
+            _exercise_live_nm_restart(xray, profile_id, nm_index, plan.tunnel_mark)
             xray, nm_index = _exercise_crash_restart(
                 xray, config_file, profile_id, nm_index,
                 plan.tunnel_mark, output, errors)
