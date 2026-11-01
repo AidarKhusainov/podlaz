@@ -146,12 +146,14 @@ unmodified Linux `openFromEnv` implementation for `XRAY_TUN_FD`. That path
 checks `TUNGETIFF` type, packet mode and interface name, uses an inherited
 packet FD, and does not take `ownsTun` ownership. The owning path still
 manages MTU/link/L3; the inherited path bypasses `setup` and `Start` link
-mutation. `Close` gates link DOWN on `ownsTun`. The upstream
-[README](https://github.com/XTLS/Xray-core/blob/v26.10.31/proxy/tun/README.md)
-documents the inherited-FD variable for mobile platforms; a **stable
-Linux external-link ownership API with exact ifindex/MTU semantics has not
-been expressly promised there**. Do not infer a product compatibility
-guarantee merely from shipped source code.
+mutation. `Close` gates link DOWN on `ownsTun`. The upstream **merged** [Linux inherited-FD PR #6338](https://github.com/XTLS/Xray-core/pull/6338)
+(explicitly supporting an inherited TUN, unprivileged Xray and no open,
+create, UP or DOWN mutations; merged 2026-06-22) establishes an intentional
+upstream Linux FD interface. Its [README](https://github.com/XTLS/Xray-core/blob/v26.10.31/proxy/tun/README.md)
+primarily illustrates the variable for Android/iOS. This upstream support
+**does not** promise exact ifindex/MTU checking, NM UUID authority or atomic
+revocation. Treat those requirements as a separate Podlaz handoff contract,
+not capabilities implicitly supplied by the upstream environment variable.
 
 The separate guest-only qualification builds the **unmodified**, exact
 upstream source using its Go 1.27 toolchain, without touching the pinned
