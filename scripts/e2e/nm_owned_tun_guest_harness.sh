@@ -29,6 +29,7 @@ EVIDENCE_KEYS=(
   tun.system_dns
   tun.https_tls
   tun.nm_owned_link
+  tun.foreign_link_collision
   tun.xray_attached
   tun.invalid_fd_rejected
   tun.lost_fd_rejected
@@ -160,7 +161,7 @@ run_scenario() {
     >"${PRIVATE_ROOT}/nm-owned-result.stdout" 2>"${PRIVATE_ROOT}/nm-owned-result.stderr"
 
   local label
-  for label in nm-owned-link-and-l3 nm-owned-invalid-fd-rejected nm-owned-lost-fd-rejected nm-owned-identity-collision-rejected nm-owned-xray-attached nm-owned-protected-traffic nm-owned-natural-full nm-owned-fault-recovery nm-owned-nm-post-xray-active nm-owned-result; do
+  for label in nm-owned-link-and-l3 nm-owned-foreign-link-collision nm-owned-invalid-fd-rejected nm-owned-lost-fd-rejected nm-owned-identity-collision-rejected nm-owned-xray-attached nm-owned-protected-traffic nm-owned-natural-full nm-owned-fault-recovery nm-owned-nm-post-xray-active nm-owned-result; do
     grep -Fx "${label}=pass" "${PRIVATE_ROOT}/nm-owned-result.stdout" >/dev/null
   done
   if [[ "${PODLAZ_E2E_NM_TUN_PROFILE}" == grouped ]]; then
@@ -168,6 +169,7 @@ run_scenario() {
     record_evidence tun.grouped_outbounds pass
   fi
   record_evidence tun.nm_owned_link pass
+  record_evidence tun.foreign_link_collision pass
   record_evidence tun.xray_attached pass
   record_evidence tun.invalid_fd_rejected pass
   record_evidence tun.lost_fd_rejected pass
