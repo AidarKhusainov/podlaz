@@ -5,7 +5,7 @@ on:
     paths:
       - '.github/workflows/hosted-nm-owned-tun-guest.yml'
       - 'scripts/e2e/nm_owned_tun_guest.py'
-      - 'scripts/e2e/nm_owned_tun_restricted_exec.c'
+      - 'scripts/e2e/fixtures/nm_owned_tun_restricted_exec.c'
       - 'scripts/e2e/nm_owned_tun_guest_test.py'
       - 'scripts/e2e/nm_owned_tun_guest_harness.sh'
       - 'scripts/e2e/nm_owned_tun_grouped_guest.py'
@@ -66,7 +66,7 @@ jobs:
           test -x "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
           cc -std=c11 -O2 -Wall -Wextra -Werror \
             -o "${RUNNER_TEMP}/nm-owned-engine/nm-owned-xray-launcher" \
-            scripts/e2e/nm_owned_tun_restricted_exec.c
+            scripts/e2e/fixtures/nm_owned_tun_restricted_exec.c
           test -x "${RUNNER_TEMP}/nm-owned-engine/nm-owned-xray-launcher"
           test "$(git -C "${RUNNER_TEMP}/xray-source" diff --name-only)" = "proxy/tun/tun_linux.go"
           sha256sum "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray" \
