@@ -108,6 +108,14 @@ run_scenario() {
   [[ -f "${launcher}" && -x "${launcher}" && ! -L "${launcher}" ]] ||
     fail "missing pinned guest-only restricted launcher"
   install -m 0755 "${launcher}" "${XRAY_ROOT}/nm-owned-xray-launcher"
+  # The outer runner owns the fixture directory, but the guest executable
+  # must be root-owned and non-writable for the restricted exec boundary.
+  sudo -n chown 0:0 "${XRAY_ROOT}/nm-owned-external-xray" \
+    "${XRAY_ROOT}/nm-owned-xray-launcher"
+  for binary in nm-owned-external-xray nm-owned-xray-launcher; do
+    [[ "$(stat -c '%u:%g:%a' "${XRAY_ROOT}/${binary}")" == '0:0:755' ]] ||
+      fail "unqualified guest-only engine ownership"
+  done
   # The outer private parent remains 0700. Permit e2e to traverse only
   # the guest read-only bind root; fixture secrets remain root-owned 0600.
   chmod 0711 "${XRAY_ROOT}"

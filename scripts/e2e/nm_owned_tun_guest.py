@@ -278,6 +278,21 @@ def _assert_restricted_xray(xray: subprocess.Popen) -> None:
             "privilege attestation did not reach actual Xray executable": "wrong-executable",
         }.get(str(exc), "inspection-error")
         print("nm-owned-xray-capability-failure=" + category, flush=True)
+        if category == "exited":
+            # Only these fixed launcher categories may leave the private
+            # guest; never export Xray stderr/config/transport secrets.
+            private_stderr = ROOT / "nm-owned-xray.stderr"
+            if private_stderr.is_file():
+                for line in private_stderr.read_text(encoding="utf-8",
+                                                     errors="replace").splitlines():
+                    match = re.fullmatch(
+                        r"research Xray privilege handoff failed: "
+                        r"(arguments-or-identity|untrusted-executable|unqualified-guest-user|"
+                        r"capability-inventory|unsupported-capability-boundary|clear-ambient|"
+                        r"drop-bounding|drop-root-identity|restrict-credentials|exec)", line)
+                    if match:
+                        print("nm-owned-launcher-failure=" + match.group(1), flush=True)
+                        break
         raise
 
 

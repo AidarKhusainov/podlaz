@@ -152,7 +152,59 @@ jobs:
             if [[ -f "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" ]]; then
               grep -E '^nm-owned-failure-step=(barrier-armed|underlay-allocated|foreign-link-collision|nm-created|fd-negative|identity-collision|child-identity-collision|xray-attaching|xray-capabilities|real-traffic|natural-global-full|live-nm-restart|xray-crash|nm-restart|xray-restart|xray-release|cleanup-xray|cleanup-nm|grouped-independent-outbounds|cleanup-underlay|cleanup-barrier)$' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
-              grep -E '^nm-owned-xray-capability-failure=(exited|inventory|credentials|retained-caps|wrong-executable|inspection-error)$' \
+              grep -E '^nm-owned-xray-capability-failure=(exited|inventory|credentials|retained-caps|wrong-executable|inspection-error)
+              grep -Fx 'nm-owned-admin-lifecycle-violation=observed' \
+                "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
+            fi
+            printf 'nm-owned-tun-guest=failed\n' >&2
+            exit 1
+          fi
+      - name: Validate fixed-schema evidence
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-owned-tun-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-owned-tun-public
+          PODLAZ_E2E_NM_TUN_PROFILE: ${{ matrix.profile }}
+        run: bash scripts/e2e/nm_owned_tun_guest_harness.sh validate-report
+      - name: Remove all private guest material
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-nm-owned-tun-private" "${RUNNER_TEMP}/nm-owned-tun.stdout" "${RUNNER_TEMP}/nm-owned-tun.stderr"
+      - name: Publish privacy-safe fixed-schema report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nm-owned-tun-feasibility-${{ matrix.release }}-${{ matrix.profile }}
+          path: ${{ runner.temp }}/podlaz-nm-owned-tun-public/hosted-synthetic-tun.txt
+          if-no-files-found: error
+          retention-days: 7
+ \
+                "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
+              grep -E '^nm-owned-launcher-failure=(arguments-or-identity|untrusted-executable|unqualified-guest-user|capability-inventory|unsupported-capability-boundary|clear-ambient|drop-bounding|drop-root-identity|restrict-credentials|exec)
+              grep -Fx 'nm-owned-admin-lifecycle-violation=observed' \
+                "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
+            fi
+            printf 'nm-owned-tun-guest=failed\n' >&2
+            exit 1
+          fi
+      - name: Validate fixed-schema evidence
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-owned-tun-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-owned-tun-public
+          PODLAZ_E2E_NM_TUN_PROFILE: ${{ matrix.profile }}
+        run: bash scripts/e2e/nm_owned_tun_guest_harness.sh validate-report
+      - name: Remove all private guest material
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-nm-owned-tun-private" "${RUNNER_TEMP}/nm-owned-tun.stdout" "${RUNNER_TEMP}/nm-owned-tun.stderr"
+      - name: Publish privacy-safe fixed-schema report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nm-owned-tun-feasibility-${{ matrix.release }}-${{ matrix.profile }}
+          path: ${{ runner.temp }}/podlaz-nm-owned-tun-public/hosted-synthetic-tun.txt
+          if-no-files-found: error
+          retention-days: 7
+ \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
               grep -Fx 'nm-owned-admin-lifecycle-violation=observed' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
