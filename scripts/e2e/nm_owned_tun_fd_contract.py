@@ -55,7 +55,7 @@ def verify_tun_fd_identity(
         raise ValueError("inherited TUN descriptor name mismatch")
     if type(flags) is not int or flags & TUN_FLAGS != TUN_FLAGS:
         raise ValueError("inherited descriptor is not an IFF_TUN|IFF_NO_PI TUN")
-    if flags & 0x0002 or flags & 0x4000:  # IFF_TAP or IFF_MULTI_QUEUE
+    if flags & (0x0002 | 0x0100 | 0x4000):  # IFF_TAP, IFF_MULTI_QUEUE, IFF_VNET_HDR
         raise ValueError("unqualified inherited TUN packet mode")
     for snapshot in (before, after):
         if (not isinstance(snapshot, dict)
