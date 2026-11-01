@@ -174,7 +174,7 @@ def start_externally_managed_xray(
             raise ValueError("external FD attached to another interface")
         inspected = bytearray(40)
         fcntl.ioctl(fd, 0x800454d2, inspected, True)  # TUNGETIFF
-        fd_name = inspected[:16].split(b"\\x00", 1)[0].decode("ascii")
+        fd_name = inspected[:16].split(bytes([0]), 1)[0].decode("ascii")
         fd_flags = struct.unpack_from("H", inspected, 16)[0]
         verify_tun_fd_identity(
             name=fd_name, flags=fd_flags, expected_name="podlaz0",
