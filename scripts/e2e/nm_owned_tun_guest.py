@@ -308,7 +308,18 @@ def _exercise_crash_restart(
     _prove_ipv6_no_leak()
     stage("nm-restart")
     # Saved ONLY in the disposable guest and explicitly removed on teardown.
+    before_pid = run(
+        "systemctl", "show", "--property=MainPID", "--value",
+        "NetworkManager.service", output=True).strip()
+    if not before_pid.isdecimal() or int(before_pid) <= 0:
+        raise ValueError("NM PID unavailable before restart")
     run("systemctl", "restart", "NetworkManager", timeout=50)
+    after_pid = run(
+        "systemctl", "show", "--property=MainPID", "--value",
+        "NetworkManager.service", output=True).strip()
+    if (not after_pid.isdecimal() or int(after_pid) <= 0
+            or after_pid == before_pid):
+        raise ValueError("NM daemon PID was not replaced")
     if not _profile_present(profile_id):
         raise ValueError("NM-owned UUID lost after NM restart")
     if not _profile_present(profile_id, active=True):
