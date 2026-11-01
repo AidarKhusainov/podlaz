@@ -6,7 +6,8 @@ from unittest.mock import patch
 from nm_owned_tun_guest import (_qualified_peer_packets,
                                 inspect_nm_tun_netlink_events,
                                 verify_attached_tun, verify_nm_survives_xray_exit,
-                                verify_live_nm_restart)
+                                verify_live_nm_restart,
+                                verify_xray_capabilities)
 
 
 class NMOwnedTunContractTest(unittest.TestCase):
@@ -34,6 +35,16 @@ class NMOwnedTunContractTest(unittest.TestCase):
                    return_value=json.dumps({"nftables": [entry]})):
             with self.assertRaisesRegex(ValueError, "missing"):
                 _qualified_peer_packets()
+
+    def test_external_fd_xray_cannot_retain_privileged_link_writers(self):
+        verify_xray_capabilities("Name:\\txray\\nCapEff:\\t0000000000002000\\nCapBnd:\\t0000000000002000\\n")
+        for bit in (12, 21):
+            with self.subTest(bit=bit):
+                text = f"CapEff:\\t{(1 << bit):016x}\\nCapBnd:\\t{(1 << bit):016x}\\n"
+                with self.assertRaisesRegex(ValueError, "ownership capabilities"):
+                    verify_xray_capabilities(text)
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            verify_xray_capabilities("CapEff: 0\\n")
 
     def test_live_nm_restart_needs_real_pid_change_and_exact_fd_link(self):
         verify_live_nm_restart("123", "456", 9, 9, 1500, 1500, True)

@@ -225,11 +225,43 @@ def start_externally_managed_xray(
         environment["PODLAZ_RESEARCH_TUN_IFINDEX"] = str(index)
         environment["PODLAZ_RESEARCH_TUN_MTU"] = str(pre["mtu"])
         return subprocess.Popen(
-            (str(candidate), "run", "-c", str(config_file)),
+            _restricted_xray_argv(config_file),
             stdout=output, stderr=errors, pass_fds=(fd,), env=environment,
         )
     finally:
         os.close(fd)
+
+
+def verify_xray_capabilities(status: str) -> None:
+    """The inherited-FD packet engine must never be able to mutate NM L3."""
+    for field in ("CapEff", "CapBnd"):
+        values = re.findall(rf"^{field}:\\s*([0-9a-fA-F]+)$", status, re.MULTILINE)
+        if len(values) != 1:
+            raise ValueError("Xray capability inventory unavailable")
+        value = int(values[0], 16)
+        # CAP_NET_ADMIN (12) can change link/routes/firewall; CAP_SYS_ADMIN
+        # (21) is not justified for an externally owned TUN packet engine.
+        if value & ((1 << 12) | (1 << 21)):
+            raise ValueError("Xray retained network ownership capabilities")
+
+
+def _assert_restricted_xray(xray: subprocess.Popen) -> None:
+    if xray.poll() is not None:
+        raise ValueError("Xray stopped before privilege attestation")
+    status_path = Path(f"/proc/{xray.pid}/status")
+    verify_xray_capabilities(status_path.read_text(encoding="ascii"))
+
+
+def _restricted_xray_argv(config_file: Path) -> tuple[str, ...]:
+    # setpriv execs the binary in place; the PID used for CapEff assertions
+    # is therefore the actual Xray process. CAP_NET_RAW stays available for
+    # marked provider transport, but CAP_NET_ADMIN / SYS_ADMIN are denied.
+    return (
+        "setpriv", "--bounding-set=-net_admin,-sys_admin",
+        "--no-new-privs",
+        "/run/podlaz-synthetic-xray/nm-owned-external-xray",
+        "run", "-c", str(config_file),
+    )
 
 
 def _assert_nm_owned_link(profile_id: str) -> int:
@@ -255,8 +287,7 @@ def _prove_invalid_fd_fails_closed(
     try:
         environment = inherited_fd_environment(invalid)
         process = subprocess.Popen(
-            ("/run/podlaz-synthetic-xray/nm-owned-external-xray",
-             "run", "-c", str(config_file)),
+            _restricted_xray_argv(config_file),
             stdout=output, stderr=errors, pass_fds=(invalid,), env=environment,
         )
         try:
@@ -277,8 +308,7 @@ def _prove_invalid_fd_fails_closed(
     # expressly forbidden by the privileged handoff contract.
     environment = inherited_fd_environment(1 << 29)
     lost = subprocess.Popen(
-        ("/run/podlaz-synthetic-xray/nm-owned-external-xray",
-         "run", "-c", str(config_file)),
+        _restricted_xray_argv(config_file),
         stdout=output, stderr=errors, env=environment, close_fds=True,
     )
     try:
@@ -318,6 +348,7 @@ def _exercise_live_nm_restart(
     stage("live-nm-restart")
     if xray.poll() is not None or _assert_nm_owned_link(profile_id) != index:
         raise ValueError("live NM restart requires original active Xray/TUN")
+    _assert_restricted_xray(xray)
     before_mtu = _link().get("mtu")
     if type(before_mtu) is not int or before_mtu <= 0:
         raise ValueError("unknown pre-restart NM TUN MTU")
@@ -416,6 +447,7 @@ def _exercise_crash_restart(
             time.sleep(0.2)
         else:
             raise ValueError("NM TUN generation not restored")
+        _assert_restricted_xray(restarted)
         _verify_paths(mark)
         _prove_physical_drop()
         _prove_ipv6_no_leak()
@@ -448,8 +480,7 @@ def _prove_child_in_process_identity_rejection(
             environment["PODLAZ_RESEARCH_TUN_MTU"] = str(
                 original["mtu"] + (1 if dimension == "mtu" else 0))
             child = subprocess.Popen(
-                ("/run/podlaz-synthetic-xray/nm-owned-external-xray",
-                 "run", "-c", str(config_file)),
+                _restricted_xray_argv(config_file),
                 stdout=output, stderr=errors, pass_fds=(fd,), env=environment,
             )
             try:
@@ -572,6 +603,9 @@ def run_guest(config_file: Path, *, grouped: bool = False) -> None:
             else:
                 raise ValueError("Xray did not bring the NM-owned TUN up")
             print("nm-owned-xray-attached=pass", flush=True)
+            stage("xray-capabilities")
+            _assert_restricted_xray(xray)
+            print("nm-owned-xray-restricted=pass", flush=True)
             stage("real-traffic")
             _verify_paths(plan.tunnel_mark)
             _prove_physical_drop()

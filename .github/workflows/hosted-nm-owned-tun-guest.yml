@@ -138,7 +138,7 @@ jobs:
             # Strict allowlisted checkpoint from the private child report.
             # NEVER export Xray logs, TUN addresses, certificates or config.
             if [[ -f "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" ]]; then
-              grep -E '^nm-owned-failure-step=(barrier-armed|underlay-allocated|foreign-link-collision|nm-created|fd-negative|identity-collision|child-identity-collision|xray-attaching|real-traffic|natural-global-full|live-nm-restart|xray-crash|nm-restart|xray-restart|xray-release|cleanup-xray|cleanup-nm|grouped-independent-outbounds|cleanup-underlay|cleanup-barrier)$' \
+              grep -E '^nm-owned-failure-step=(barrier-armed|underlay-allocated|foreign-link-collision|nm-created|fd-negative|identity-collision|child-identity-collision|xray-attaching|xray-capabilities|real-traffic|natural-global-full|live-nm-restart|xray-crash|nm-restart|xray-restart|xray-release|cleanup-xray|cleanup-nm|grouped-independent-outbounds|cleanup-underlay|cleanup-barrier)$' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
               grep -Fx 'nm-owned-admin-lifecycle-violation=observed' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
