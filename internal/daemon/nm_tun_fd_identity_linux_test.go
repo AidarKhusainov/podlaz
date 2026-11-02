@@ -56,6 +56,7 @@ func TestNMOwnedTunFDKernelIdentityRejectsDriftAndForeignLinks(t *testing.T) {
 		fail bool
 	}{
 		{"exact-single-queue-TUN", func(*nmTunFDKernelObservation) {}, false},
+		{"persistent-NM-TUN", func(v *nmTunFDKernelObservation) { v.Flags |= unix.IFF_PERSIST }, false},
 		{"foreign-interface", func(v *nmTunFDKernelObservation) { v.Identity.Name = "foreign0" }, true},
 		{"ifindex-ABA", func(v *nmTunFDKernelObservation) { v.Identity.Index++ }, true},
 		{"MTU-drift", func(v *nmTunFDKernelObservation) { v.Identity.MTU-- }, true},
