@@ -102,7 +102,7 @@ func TestNML3ReadOnlyIntentRejectsDifferentBootAndSession(t *testing.T) {
 		BootID: "boot-a", SessionID: session.SessionID,
 		UUID: "abcdef00-0000-4000-8000-000000000002",
 		Interface: "podlaz0", IPv4: "198.18.0.17/32",
-		DNS: "1.1.1.1", MTU: 1500, Mark: 101, Stage: "planned",
+		DNS: "1.1.1.1", MTU: 1500, Metric: 10, Mark: 101, Stage: "planned",
 	}
 	if err := stager.persist(intent); err != nil {
 		t.Fatal(err)
