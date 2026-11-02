@@ -103,6 +103,13 @@ A private, uncalled read-only preflight combines kernel, active NM D-Bus,
 and repeated kernel identity observation, refusing intermediate drift. It
 must never trigger an FD handoff without durable generation fencing and
 independently enforced process/FD confinement and Privacy Envelope.
+A separate, currently uncalled NM generation reservation persists a one-shot,
+boot-scoped session identity, nonce, egress mark and exact kernel/NM identities.
+It requires an already armed, persisted marked Privacy Envelope and a fresh
+kernel → NM → kernel read-only preflight. The durable state is a **deny fence**,
+never FD admission permission: unknown, old-boot, malformed or still-reserved
+state blocks reuse. There is deliberately no cleanup/retire operation until a
+future confined supervisor proves old-generation cohort quiescence.
 Production still requires independent exact kernel authority checks,
 a persisted generation, privileged FD broker and restricted process cohort.
 Production still requires NM D-Bus ownership, durable generation fencing,
