@@ -51,7 +51,7 @@ func TestNMOwnedTunConfigMarksVLESSWithoutChangingDefaultBackend(t *testing.T) {
 	}
 
 	var current, proposed struct {
-		Inbounds []map[string]any `json:"inbounds"`
+		Inbounds  []map[string]any `json:"inbounds"`
 		Outbounds []map[string]any `json:"outbounds"`
 	}
 	if err := json.Unmarshal(before, &current); err != nil {
@@ -159,15 +159,15 @@ func TestNMOwnedTunConfigPreservesGroupedProviderAuthority(t *testing.T) {
 		}
 	}
 	var runtime struct {
-		Routing json.RawMessage `json:"routing"`
+		Routing   json.RawMessage `json:"routing"`
 		Balancers json.RawMessage `json:"balancers"`
 		FutureTop json.RawMessage `json:"futureTop"`
 		Outbounds []struct {
-			Tag string `json:"tag"`
+			Tag            string `json:"tag"`
 			StreamSettings struct {
 				Sockopt struct {
-					Mark uint32 `json:"mark"`
-					KeepAlive int `json:"tcpKeepAliveIdle"`
+					Mark      uint32 `json:"mark"`
+					KeepAlive int    `json:"tcpKeepAliveIdle"`
 				} `json:"sockopt"`
 			} `json:"streamSettings"`
 		} `json:"outbounds"`
