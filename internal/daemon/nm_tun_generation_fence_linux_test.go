@@ -63,10 +63,10 @@ func TestNMGenerationReservationPersistsBeforeAdmissionAndBlocksReplay(t *testin
 }
 
 func TestNMGenerationReservationRejectsUnarmedAndForeignStateBeforeProof(t *testing.T) {
-	for _, tc := range []struct{
-		name   string
-		edit   func(*networkSessionState)
-		mark   uint32
+	for _, tc := range []struct {
+		name string
+		edit func(*networkSessionState)
+		mark uint32
 	}{
 		{"unarmed", func(s *networkSessionState) { s.Protection.State = networkSessionProtectionUnarmed }, 101},
 		{"no-protection", func(s *networkSessionState) { s.Protection = nil }, 101},
@@ -87,7 +87,10 @@ func TestNMGenerationReservationRejectsUnarmedAndForeignStateBeforeProof(t *test
 			called := false
 			f := newNMGenerationFence(dir, fixedBootID("boot-a"))
 			_, err := f.reserveWith(context.Background(), 9, session.SessionID, tc.mark, testNMFDIdentity(), validExpectedNMTun(),
-				func(context.Context, int, nmTunFDKernelIdentity, nmTunDBusAuthority) error { called = true; return nil })
+				func(context.Context, int, nmTunFDKernelIdentity, nmTunDBusAuthority) error {
+					called = true
+					return nil
+				})
 			if err == nil || called {
 				t.Fatalf("unprotected admission: err=%v called=%v", err, called)
 			}
@@ -105,12 +108,16 @@ func TestNMGenerationReservationRejectsFailedProofAndCorruptAuthority(t *testing
 	cause := errors.New("foreign NM connection")
 	k, nm := testNMFDIdentity(), validExpectedNMTun()
 	if _, err := f.reserveWith(context.Background(), 9, session.SessionID, 101, k, nm,
-		func(context.Context, int, nmTunFDKernelIdentity, nmTunDBusAuthority) error { return cause }); !errors.Is(err, cause) { t.Fatalf("lost proof failure: %v", err) }
+		func(context.Context, int, nmTunFDKernelIdentity, nmTunDBusAuthority) error { return cause }); !errors.Is(err, cause) {
+		t.Fatalf("lost proof failure: %v", err)
+	}
 	if _, err := os.Stat(f.path()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("failed proof left reservation: %v", err)
 	}
 	if _, err := f.reserveWith(context.Background(), 9, session.SessionID, 101, k, nm,
-		func(context.Context, int, nmTunFDKernelIdentity, nmTunDBusAuthority) error { return nil }); err != nil { t.Fatal(err) }
+		func(context.Context, int, nmTunFDKernelIdentity, nmTunDBusAuthority) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
 	if _, found, err := newNMGenerationFence(dir, fixedBootID("boot-b")).load(); err == nil || found {
 		t.Fatalf("old-boot authority admitted: %v %v", found, err)
 	}

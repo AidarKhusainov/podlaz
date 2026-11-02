@@ -27,16 +27,16 @@ const (
 // capability. Generation 2 and removal require a future confined supervisor
 // with positive proof that the previous cohort cannot retain copied TUN FDs.
 type nmGenerationReservation struct {
-	Schema     string `json:"schema"`
-	Owner      string `json:"owner"`
-	BootID     string `json:"boot_id"`
-	SessionID  string `json:"session_id"`
-	Generation uint64 `json:"generation"`
-	Nonce      string `json:"nonce"`
-	State      string `json:"state"`
-	EgressMark uint32 `json:"egress_mark"`
+	Schema     string                `json:"schema"`
+	Owner      string                `json:"owner"`
+	BootID     string                `json:"boot_id"`
+	SessionID  string                `json:"session_id"`
+	Generation uint64                `json:"generation"`
+	Nonce      string                `json:"nonce"`
+	State      string                `json:"state"`
+	EgressMark uint32                `json:"egress_mark"`
 	Kernel     nmTunFDKernelIdentity `json:"kernel"`
-	NM         nmTunDBusAuthority `json:"network_manager"`
+	NM         nmTunDBusAuthority    `json:"network_manager"`
 }
 
 type nmGenerationFence struct {
