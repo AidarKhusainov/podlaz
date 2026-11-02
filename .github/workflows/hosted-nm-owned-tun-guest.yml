@@ -150,7 +150,7 @@ jobs:
             # Strict allowlisted checkpoint from the private child report.
             # NEVER export Xray logs, TUN addresses, certificates or config.
             if [[ -f "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" ]]; then
-              grep -E '^nm-owned-failure-step=(barrier-armed|underlay-allocated|foreign-link-collision|nm-created|fd-negative|identity-collision|child-identity-collision|xray-attaching|xray-capabilities|real-traffic|natural-global-full|live-nm-restart|xray-crash|nm-restart|xray-restart|xray-release|cleanup-xray|cleanup-nm|grouped-independent-outbounds|cleanup-underlay|cleanup-barrier)$' \
+              grep -E '^nm-owned-failure-step=(barrier-armed|underlay-allocated|foreign-link-collision|nm-created|fd-negative|fd-duplicate|identity-collision|child-identity-collision|xray-attaching|xray-capabilities|real-traffic|natural-global-full|live-nm-restart|xray-crash|nm-restart|xray-restart|xray-release|cleanup-xray|cleanup-nm|grouped-independent-outbounds|cleanup-underlay|cleanup-barrier)$' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
               grep -E '^nm-owned-xray-capability-failure=(exited|inventory|credentials|retained-caps|wrong-executable|inspection-error)$' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true

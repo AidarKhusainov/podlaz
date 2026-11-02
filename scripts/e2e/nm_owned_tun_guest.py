@@ -501,6 +501,48 @@ def _exercise_crash_restart(
     return restarted, next_index
 
 
+
+def _prove_duplicated_fd_outlives_origin(profile_id: str, index: int) -> None:
+    """Negative kernel lifetime witness, NOT successful FD revocation.
+
+    A close by the transferring owner does not revoke another descriptor
+    referencing the same attached TUN open-file description. The disposable
+    guest already has an armed physical-egress barrier.
+    """
+    if _assert_nm_owned_link(profile_id) != index:
+        raise ValueError("NM identity lost before duplicate-FD witness")
+    before = _link()
+    original = os.open("/dev/net/tun", os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
+    duplicate = None
+    try:
+        request = bytearray(struct.pack("16sH22x", b"podlaz0", 0x0001 | 0x1000))
+        fcntl.ioctl(original, 0x400454ca, request, True)  # TUNSETIFF
+        if request[:16].split(bytes([0]), 1)[0] != b"podlaz0":
+            raise ValueError("duplicate-FD witness attached foreign link")
+        duplicate = os.dup(original)
+    finally:
+        os.close(original)
+    try:
+        # The original *has been closed*. An ioctl on its duplicated file
+        # description must still succeed; there is no owner-close revocation.
+        inspected = bytearray(40)
+        fcntl.ioctl(duplicate, 0x800454d2, inspected, True)  # TUNGETIFF
+        verify_tun_fd_identity(
+            name=inspected[:16].split(bytes([0]), 1)[0].decode("ascii"),
+            flags=struct.unpack_from("H", inspected, 16)[0],
+            expected_name="podlaz0", before=before, after=_link(),
+            expected_index=index, expected_mtu=before["mtu"],
+        )
+        if _assert_nm_owned_link(profile_id) != index:
+            raise ValueError("duplicate-FD witness changed NM identity")
+    finally:
+        if duplicate is not None:
+            os.close(duplicate)
+    _prove_physical_drop()
+    _prove_ipv6_no_leak()
+    print("nm-owned-duplicate-fd-survives-close=pass", flush=True)
+
+
 def _prove_child_in_process_identity_rejection(
     config_file: Path, profile_id: str, index: int,
     output: object, errors: object,
@@ -615,6 +657,8 @@ def run_guest(config_file: Path, *, grouped: bool = False) -> None:
             stage("fd-negative")
             _prove_invalid_fd_fails_closed(config_file, profile_id, nm_index, output, errors)
             print("nm-owned-invalid-fd-rejected=pass", flush=True)
+            stage("fd-duplicate")
+            _prove_duplicated_fd_outlives_origin(profile_id, nm_index)
             stage("identity-collision")
             try:
                 start_externally_managed_xray(

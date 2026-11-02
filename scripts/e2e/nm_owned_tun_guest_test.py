@@ -1,9 +1,11 @@
 """Pure single-writer NM-owned TUN research contracts (disposable guest only)."""
 import json
+import struct
 import unittest
 from unittest.mock import patch
 
-from nm_owned_tun_guest import (_qualified_peer_packets,
+from nm_owned_tun_guest import (_prove_duplicated_fd_outlives_origin,
+                                _qualified_peer_packets,
                                 inspect_nm_tun_netlink_events,
                                 verify_attached_tun, verify_nm_survives_xray_exit,
                                 verify_live_nm_restart,
@@ -61,6 +63,51 @@ class NMOwnedTunContractTest(unittest.TestCase):
             with self.subTest(payload=payload[:25]):
                 with self.assertRaises(ValueError):
                     verify_xray_capabilities(payload, uid=1001, gid=1001)
+
+
+    def test_duplication_remains_usable_after_origin_close(self):
+        # A passing witness proves non-revocation, never ownership fencing.
+        link = {"ifname": "podlaz0", "ifindex": 9, "mtu": 1500,
+                "linkinfo": {"info_kind": "tun"}, "flags": ["UP"]}
+        calls = []
+
+        def ioctl(fd, command, request, mutate):
+            calls.append(("ioctl", fd, command))
+            if command == 0x800454d2:
+                request[:18] = struct.pack("16sH", b"podlaz0", 0x1001)
+
+        def close(fd):
+            calls.append(("close", fd))
+
+        with (patch("nm_owned_tun_guest._assert_nm_owned_link", return_value=9),
+              patch("nm_owned_tun_guest._link", return_value=link),
+              patch("nm_owned_tun_guest.os.open", return_value=31),
+              patch("nm_owned_tun_guest.os.dup", return_value=32),
+              patch("nm_owned_tun_guest.os.close", side_effect=close),
+              patch("nm_owned_tun_guest.fcntl.ioctl", side_effect=ioctl),
+              patch("nm_owned_tun_guest._prove_physical_drop"),
+              patch("nm_owned_tun_guest._prove_ipv6_no_leak")):
+            _prove_duplicated_fd_outlives_origin("fixture-uuid", 9)
+
+        self.assertLess(calls.index(("close", 31)),
+                        calls.index(("ioctl", 32, 0x800454d2)))
+        self.assertEqual(calls[-1], ("close", 32))
+
+    def test_duplicate_fd_is_closed_on_failed_identity_inspection(self):
+        link = {"ifname": "podlaz0", "ifindex": 9, "mtu": 1500,
+                "linkinfo": {"info_kind": "tun"}, "flags": ["UP"]}
+        closed = []
+        with (patch("nm_owned_tun_guest._assert_nm_owned_link", return_value=9),
+              patch("nm_owned_tun_guest._link", return_value=link),
+              patch("nm_owned_tun_guest.os.open", return_value=31),
+              patch("nm_owned_tun_guest.os.dup", return_value=32),
+              patch("nm_owned_tun_guest.os.close", side_effect=closed.append),
+              patch("nm_owned_tun_guest.fcntl.ioctl", side_effect=[
+                  None, OSError("stale FD"),
+              ])):
+            with self.assertRaisesRegex(OSError, "stale FD"):
+                _prove_duplicated_fd_outlives_origin("fixture-uuid", 9)
+        self.assertEqual(closed, [31, 32])
 
     def test_live_nm_restart_needs_real_pid_change_and_exact_fd_link(self):
         verify_live_nm_restart("123", "456", 9, 9, 1500, 1500, True)

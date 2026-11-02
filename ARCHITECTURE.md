@@ -206,6 +206,84 @@ guarantees and a privilege-limited supervisor fully eliminate the unsafe
 window, this extension cannot justify production adoption. Future upstream
 revision requires rebase, review, full guest matrix and independent evidence.
 
+**FD identity and generation-fencing decision record (2026-11-02,
+research-only; production admission BLOCKED).** Source scope: Linux
+`include/uapi/linux/if_tun.h` and `drivers/net/tun.c` (reviewed v6.17),
+NetworkManager 1.46/1.54 guest-managed persistent `tun` profiles,
+and pinned upstream Xray v26.10.31
+`proxy/tun/tun_linux.go` at
+`a4a3dff5b20c2faae567b742c172c7b95e75c083`.
+Links: [TUN UAPI](https://github.com/torvalds/linux/blob/v6.17/include/uapi/linux/if_tun.h),
+[driver](https://github.com/torvalds/linux/blob/v6.17/drivers/net/tun.c),
+[upstream Xray](https://github.com/XTLS/Xray-core/blob/a4a3dff5b20c2faae567b742c172c7b95e75c083/proxy/tun/tun_linux.go).
+These are source findings, not proof for every guest kernel.
+
+- `TUNGETIFF` reports a mutable **name/flags**, not an immutable
+  FD-to-ifindex plus generation token. `TUNGETDEVNETNS` returns a
+  network-namespace FD but the driver requires `CAP_NET_ADMIN`.
+  The guest Xray deliberately has only `CAP_NET_RAW`. Granting it
+  `CAP_NET_ADMIN` solely for namespace inspection would defeat its
+  no-link-mutation privilege boundary. Parent-side namespace checks,
+  netlink `LinkByName`, `ifindex` and `MTU` are separate snapshots;
+  privileged link replacement, rename, move and ifindex reuse remain
+  potential TOCTOU/ABA races. NM's active UUID and D-Bus service
+  lifecycle are independent of that kernel packet descriptor.
+- Closing the transferor's descriptor, Xray's own close or a tracked
+  Xray PID exit does **not** revoke unrelated `dup`/`fork`/
+  `SCM_RIGHTS` references. The TUN driver detaches queues when the
+  final referenced open file is released, or detaches them on device
+  unregister; neither is a general revoke-all-copies-by-generation
+  operation. A guest-only witness now requires `TUNGETIFF` on a
+  duplicated FD **after the original is closed**. Its PASS means
+  *non-revocation was reproduced*, not that revocation is implemented.
+- A minimum **candidate**, not an implemented contract: Podlaz
+  durably records boot ID, random session nonce, monotonically fenced
+  generation, NM connection UUID, namespace identity, exact link
+  identity and Privacy Envelope authority before handoff; only one
+  trusted supervisor may open/transfer TUN FDs. The supervisor must
+  exclusively control a per-generation isolated process group/cgroup
+  and prevent FD escape (including `SCM_RIGHTS`, inherited descriptors,
+  same-UID `/proc/*/fd` access and child escape). Revoke *access* by
+  stopping admission, retaining the armed envelope, killing the entire
+  isolated generation and independently verifying it is empty before
+  admitting generation N+1. `pidfd` only identifies the tracked
+  process, not every FD holder. A cgroup-empty check alone cannot prove
+  no FD escaped. Any missing assurance keeps the session fenced and
+  reports Unknown; it cannot safely publish Connected or release the
+  Privacy Envelope.
+- No current upstream Xray environment flag carries an authenticated
+  generation token or atomically binds the inherited FD to expected
+  NM UUID + netns + ifindex. The locally patched in-process check is
+  useful defense in depth, not a solution. NetworkManager's VPN
+  plugin D-Bus lifecycle does not confer an FD revocation authority.
+  **Do not ship this candidate**, claim atomic handoff, or enable NM
+  production on the basis of successful typed/grouped guest tests.
+
+**Options and maintenance:** prefer an upstream-reviewed Xray/Linux
+interface supporting a demonstrable immutable FD identity and explicit
+generation/termination acknowledgement, paired with the independently
+qualified supervisor and conditional process isolation above. If that
+is unavailable, a separately approved, exact-version Xray extension
+would require per-release rebase/security review, Linux/NM version
+matrix, ABI/config compatibility tests, crash/boot/replacement/collision
+and all-provider tests, binary provenance and a package rollback that
+disables NM opt-in without weakening the existing Privacy Envelope.
+Without a proven trust and FD-containment boundary, neither upstream
+nor a private extension solves revocation. The supported safe fallback
+is the existing Xray-owned TUN backend; users who require NM desktop
+classification cannot be promised it by this research branch.
+
+**Qualification scope:** the existing NM 1.46/1.54 × typed/grouped
+disposable guests already require real protected DNS/HTTPS, natural
+FULL, NM PID restart while Xray remains live, Xray SIGKILL/rebind,
+wrong-FD/ifindex/MTU collisions, guarded IPv4/IPv6 egress, exact
+cleanup and foreign-state survival. The additional negative duplicated-FD
+witness tests a distinct kernel lifetime property. It does **not**
+exercise adversarial FD transfer across process boundaries, forced
+NM *device replacement* with ifindex reuse, unattended daemon restart
+or boot recovery, or all supported provider graph classes. Those
+remain explicit unqualified blockers regardless of CI success.
+
 Any future implementation has one writer per resource: NetworkManager for
 delegated link L3, DNS and VPN/device activation where applicable; Podlaz for
 boot-ID-scoped session intent, Privacy Envelope, firewall/policy protection,
