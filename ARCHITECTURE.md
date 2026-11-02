@@ -81,6 +81,18 @@ Every successful mutation is reported to the transaction boundary immediately an
 
 Xray owns creation/lifetime of the native `podlaz0` TUN link. The daemon may configure only the exact link identity that appeared for the tracked child and owns only its exact allocated session address and surrounding Podlaz resources. Stopping the tracked Xray process is the release mechanism for the Xray-owned link.
 
+A future opt-in NM-owned TUN FD broker has a Linux-only, read-only kernel
+identity preflight. It refuses non-TUN descriptors and mismatched expected
+interface name/index/MTU, current network namespace device/inode, and link
+administrative state before admission. This code is **not wired into the
+default backend** and is not an NM session admission path. The expected
+identity must come from independent boot-scoped persisted authority, not
+observed netlink lookalikes. Kernel TUNGETIFF and netlink reads are not atomic,
+do not prove NM UUID or generation, and do not revoke duplicated descriptors.
+Production still requires NM D-Bus ownership, durable generation fencing,
+enforceable confinement/FD escape prevention, supervisor quiescence and an
+already-armed Privacy Envelope before any inherited FD is admitted.
+
 `systemd-resolved` and nftables verification are composition checks, not presence checks. Extra/foreign state inside a Podlaz-owned resource is ambiguous and fails closed rather than being normalized away.
 
 ## Network Session and Privacy Envelope
