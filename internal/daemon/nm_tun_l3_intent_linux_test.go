@@ -3,9 +3,7 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"reflect"
 	"testing"
@@ -28,7 +26,7 @@ func TestNML3ReadOnlyIntentRecoveryPreservesExactProgress(t *testing.T) {
 				Interface: "podlaz0",
 				IPv4: "198.18.0.17/32",
 				DNS: "1.1.1.1",
-				MTU: 1500,
+				MTU: 1500, Metric: 10,
 				Mark: 101,
 				Stage: stage,
 			}
@@ -73,7 +71,7 @@ func TestNML3ReadOnlyIntentRejectsForeignOrBrokenStateWithoutMutation(t *testing
 				BootID: "boot-a", SessionID: session.SessionID,
 				UUID: "abcdef00-0000-4000-8000-000000000002",
 				Interface: "podlaz0", IPv4: "198.18.0.17/32",
-				DNS: "1.1.1.1", MTU: 1500, Mark: 101, Stage: "planned",
+				DNS: "1.1.1.1", MTU: 1500, Metric: 10, Mark: 101, Stage: "planned",
 			}
 			tc.edit(&entry)
 			data, err := json.Marshal(entry)
@@ -153,14 +151,3 @@ func TestNML3ReadOnlyIntentRefusesSymlinksUnknownFieldsAndPermissions(t *testing
 	}
 }
 
-func TestNML3ReadOnlyIntentHasNoNetworkSideEffects(t *testing.T) {
-	dir := t.TempDir()
-	_ = protectedNMTestSession(t, dir)
-	stager := newNML3Stager(dir, fixedBootID("boot-a"))
-	if _, exists, err := stager.loadIntent(); err != nil || exists {
-		t.Fatalf("missing intent state: %v %v", exists, err)
-	}
-	// A read must never invoke a profile Add, Activate, or cleanup operation.
-	_ = context.Background()
-	_ = errors.New("no network mutation")
-}

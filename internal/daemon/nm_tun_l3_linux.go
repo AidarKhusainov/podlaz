@@ -46,6 +46,7 @@ type nmL3Intent struct {
 	DNS          string          `json:"dns"`
 	Mark         uint32          `json:"mark"`
 	MTU          uint32          `json:"mtu"`
+	Metric       uint32          `json:"metric"`
 	Stage        string          `json:"stage"`
 	SettingsPath dbus.ObjectPath `json:"settings_path,omitempty"`
 	ActivePath   dbus.ObjectPath `json:"active_path,omitempty"`
@@ -147,7 +148,7 @@ func (s nmL3Stager) stageWith(ctx context.Context, sessionID string, mark uint32
 	}
 	intent := nmL3Intent{
 		Schema: nmL3IntentSchema, Owner: networkSessionStateOwner, BootID: boot, SessionID: sessionID,
-		UUID: uuid, Interface: plan.Interface, IPv4: plan.IPv4, DNS: plan.DNS, Mark: mark, MTU: plan.MTU, Stage: "planned",
+		UUID: uuid, Interface: plan.Interface, IPv4: plan.IPv4, DNS: plan.DNS, Mark: mark, MTU: plan.MTU, Metric: plan.Metric, Stage: "planned",
 	}
 	if err := s.persist(intent); err != nil {
 		return nmL3Intent{}, err

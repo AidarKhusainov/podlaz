@@ -87,7 +87,7 @@ func validateNML3Intent(intent nmL3Intent) error {
 		!nmUUIDPattern.MatchString(intent.UUID) || intent.Mark == 0 ||
 		validateNML3Plan(nmL3Plan{
 			Interface: intent.Interface, MTU: intent.MTU,
-			IPv4: intent.IPv4, DNS: intent.DNS, Metric: 10,
+			IPv4: intent.IPv4, DNS: intent.DNS, Metric: intent.Metric,
 		}) != nil {
 		return errors.New("invalid durable NM L3 intent")
 	}
