@@ -5,6 +5,7 @@ package daemon
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -118,6 +119,44 @@ func TestNML3ReadOnlyIntentRejectsDifferentBootAndSession(t *testing.T) {
 	}
 	if _, exists, err := stager.loadIntent(); err == nil || exists {
 		t.Fatalf("foreign Network Session adopted: exists=%v err=%v", exists, err)
+	}
+}
+
+func TestNML3ReadOnlyIntentDoesNotCleanupPreviousBootSessionState(t *testing.T) {
+	dir := t.TempDir()
+	session := protectedNMTestSession(t, dir)
+	intent := nmL3Intent{
+		Schema: nmL3IntentSchema, Owner: networkSessionStateOwner,
+		BootID: "boot-a", SessionID: session.SessionID,
+		UUID: "abcdef00-0000-4000-8000-000000000002",
+		Interface: "podlaz0", IPv4: "198.18.0.17/32",
+		DNS: "1.1.1.1", MTU: 1500, Metric: 10, Mark: 101, Stage: "planned",
+	}
+	stager := newNML3Stager(dir, fixedBootID("boot-a"))
+	if err := stager.persist(intent); err != nil {
+		t.Fatal(err)
+	}
+	store := newNetworkSessionStateStore(dir, fixedBootID("boot-a"))
+	if _, _, err := store.Update(func(state *networkSessionState) error {
+		state.BootID = "boot-b"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(dir, networkSessionContinuationFileName)
+	before, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := stager.loadIntent(); err == nil || ok {
+		t.Fatalf("previous-boot session adopted: ok=%v err=%v", ok, err)
+	}
+	after, err := os.ReadFile(sessionPath)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("read-only inspection modified parent Network Session: %v", err)
+	}
+	if _, err := os.Stat(stager.path()); err != nil {
+		t.Fatalf("read-only inspection discarded NM intent: %v", err)
 	}
 }
 
