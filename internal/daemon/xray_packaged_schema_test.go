@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,6 +64,9 @@ func TestPackagedNMOwnedXraySecurityBoundary(t *testing.T) {
 		t.Fatalf("write protected config: %v", err)
 	}
 	assertXrayTunConfigSchemaAccepted(t, xrayPath, validPath)
+	if err := preflightNMOwnedXrayCompatibilityWithRuntime(context.Background(), xrayPath, validConfig); err != nil {
+		t.Fatalf("official NM runtime rejected compatible protected profile: %v", err)
+	}
 
 	// Previously supported VLESS without TLS remains valid for the default
 	// packaged engine. The separately pinned newer engine rejects it; do not
@@ -78,6 +82,9 @@ func TestPackagedNMOwnedXraySecurityBoundary(t *testing.T) {
 	output, err := exec.CommandContext(context.Background(), xrayPath, "run", "-test", "-config", plaintextPath).CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "vless without TLS or other encryption is prohibited") {
 		t.Fatalf("newer pinned Xray must expose the plaintext VLESS compatibility blocker: exit=%v, output=%s", err, output)
+	}
+	if err := preflightNMOwnedXrayCompatibilityWithRuntime(context.Background(), xrayPath, plaintext); !errors.Is(err, errNMOwnedXrayIncompatible) {
+		t.Fatalf("NM runtime must fail closed for public plaintext VLESS: %v", err)
 	}
 }
 
