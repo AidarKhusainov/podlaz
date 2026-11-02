@@ -95,7 +95,7 @@ func observeNMOwnedTunFDKernelIdentity(fd int) (nmTunFDKernelObservation, error)
 	// actual TUN device, not the original socket or the querying process.
 	// It requires CAP_NET_ADMIN, hence only a privileged broker may call it.
 	const tunGetDeviceNetNS = 0x54e3
-	nsFD, err := unix.IoctlGetInt(fd, tunGetDeviceNetNS)
+	nsFD, err := unix.IoctlRetInt(fd, tunGetDeviceNetNS)
 	if err != nil {
 		return nmTunFDKernelObservation{}, fmt.Errorf("read TUN device namespace: %w", err)
 	}
