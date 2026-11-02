@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/godbus/dbus/v5"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 )
 
 const (
@@ -44,6 +45,7 @@ type nmL3Intent struct {
 	IPv4 string `json:"ipv4"`
 	DNS string `json:"dns"`
 	Mark uint32 `json:"mark"`
+	MTU uint32 `json:"mtu"`
 	Stage string `json:"stage"`
 	SettingsPath dbus.ObjectPath `json:"settings_path,omitempty"`
 	ActivePath dbus.ObjectPath `json:"active_path,omitempty"`
@@ -69,11 +71,11 @@ func (s nmL3Stager) StageProtected(ctx context.Context, sessionID string, mark u
 	bus, err := connectNML3Bus(ctx)
 	if err != nil { return nmL3Intent{}, err }
 	defer bus.Close()
-	return s.stageWith(ctx, sessionID, mark, plan, bus, nmL3NameUnoccupied)
+	return s.stageWith(ctx, sessionID, mark, plan, bus, nmL3NameUnoccupied, verifyNML3Barrier)
 }
 
-func (s nmL3Stager) stageWith(ctx context.Context, sessionID string, mark uint32, plan nmL3Plan, nm nmL3Mutator, checkName func(string) error) (nmL3Intent, error) {
-	if ctx == nil || nm == nil || checkName == nil || mark == 0 || !networkSessionIDPattern.MatchString(sessionID) {
+func (s nmL3Stager) stageWith(ctx context.Context, sessionID string, mark uint32, plan nmL3Plan, nm nmL3Mutator, checkName func(string) error, verifyBarrier func(context.Context, networkSessionProtection) error) (nmL3Intent, error) {
+	if ctx == nil || nm == nil || checkName == nil || verifyBarrier == nil || mark == 0 || !networkSessionIDPattern.MatchString(sessionID) {
 		return nmL3Intent{}, errors.New("incomplete NM TUN activation authority")
 	}
 	if err := ctx.Err(); err != nil { return nmL3Intent{}, err }
@@ -109,12 +111,15 @@ func (s nmL3Stager) stageWith(ctx context.Context, sessionID string, mark uint32
 	for _, m := range state.Protection.EgressMarks { if m == mark { armed = true } }
 	if !armed { return nmL3Intent{}, errors.New("NM egress mark is not protected") }
 	if err := checkName(plan.Interface); err != nil { return nmL3Intent{}, fmt.Errorf("NM name collision or inspection failure: %w", err) }
+	if err := verifyBarrier(ctx, *state.Protection); err != nil {
+		return nmL3Intent{}, fmt.Errorf("verify exact armed privacy barrier before NM mutation: %w", err)
+	}
 	if err := ctx.Err(); err != nil { return nmL3Intent{}, err }
 	uuid, err := newNML3UUID()
 	if err != nil { return nmL3Intent{}, err }
 	intent := nmL3Intent{
 		Schema: nmL3IntentSchema, Owner: networkSessionStateOwner, BootID: boot, SessionID: sessionID,
-		UUID: uuid, Interface: plan.Interface, IPv4: plan.IPv4, DNS: plan.DNS, Mark: mark, Stage: "planned",
+		UUID: uuid, Interface: plan.Interface, IPv4: plan.IPv4, DNS: plan.DNS, Mark: mark, MTU: plan.MTU, Stage: "planned",
 	}
 	if err := s.persist(intent); err != nil { return nmL3Intent{}, err }
 	// Once mutation starts, even a timeout/failed call may have applied.
@@ -146,7 +151,7 @@ func (s nmL3Stager) persist(intent nmL3Intent) error {
 
 func validateNML3Plan(p nmL3Plan) error {
 	if err := validateNetworkSessionInterface(p.Interface); err != nil { return err }
-	if p.MTU < 576 || p.MTU > 9000 || p.Metric == 0 || p.Metric > 1024 {
+	if p.MTU != 1500 || p.Metric == 0 || p.Metric > 1024 {
 		return errors.New("invalid NM TUN MTU or route metric")
 	}
 	addr, err := netip.ParsePrefix(p.IPv4)
@@ -180,6 +185,14 @@ func nmL3Settings(uuid string, plan nmL3Plan) map[string]map[string]dbus.Variant
 		},
 		"ipv6": {"method": v("disabled")},
 	}
+}
+
+// This verifier checks the actual nftables rules, not just the durable
+// session state. It is read-only and cannot arm/repair a missing barrier.
+func verifyNML3Barrier(ctx context.Context, authority networkSessionProtection) error {
+	plan, err := privacyEnvelopePlanFromAuthority(authority)
+	if err != nil { return err }
+	return (netexecutor.PrivacyEnvelopeExecutor{}).Verify(ctx, plan)
 }
 
 func nmL3NameUnoccupied(name string) error {

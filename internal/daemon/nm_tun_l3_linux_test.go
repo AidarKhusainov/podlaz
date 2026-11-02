@@ -72,9 +72,9 @@ func TestNML3StagesInMemoryProfileAndActivationWithDurableAuthority(t *testing.T
 	entry, err := stager.stageWith(context.Background(), state.SessionID, 101, testNML3Plan(), mutation, func(string)error {
 		calls=append(calls,"no-collision")
 		return nil
-	})
+	}, func(context.Context, networkSessionProtection) error { calls=append(calls,"privacy-verified"); return nil })
 	if err != nil { t.Fatal(err) }
-	if !reflect.DeepEqual(calls, []string{"no-collision","add","activate"}) {
+	if !reflect.DeepEqual(calls, []string{"no-collision","privacy-verified","add","activate"}) {
 		t.Fatalf("mutating NM call ordering=%v",calls)
 	}
 	if entry.Stage != "activating" || entry.ActivePath == "" {
@@ -86,7 +86,7 @@ func TestNML3StagesInMemoryProfileAndActivationWithDurableAuthority(t *testing.T
 	if info, err := os.Stat(stager.path()); err != nil || info.Mode().Perm()!=0o600 {
 		t.Fatalf("NM intent not private: %v %v",info,err)
 	}
-	if _, err := stager.stageWith(context.Background(),state.SessionID,101,testNML3Plan(),mutation,func(string)error { t.Fatal("duplicate did network inspection"); return nil }); err == nil {
+	if _, err := stager.stageWith(context.Background(),state.SessionID,101,testNML3Plan(),mutation,func(string)error { t.Fatal("duplicate did network inspection"); return nil },func(context.Context,networkSessionProtection)error{ t.Fatal("duplicate verified privacy"); return nil }); err == nil {
 		t.Fatal("second activation adopted or replaced previous NM intent")
 	}
 }
@@ -114,7 +114,7 @@ func TestNML3FailureNeverCleansAmbiguousIntentOrRetries(t *testing.T) {
 					return "",failure
 				},
 			}
-			_,err:=stage.stageWith(context.Background(),session.SessionID,101,testNML3Plan(),mutation,func(string)error{return nil})
+			_,err:=stage.stageWith(context.Background(),session.SessionID,101,testNML3Plan(),mutation,func(string)error{return nil},func(context.Context,networkSessionProtection)error{return nil})
 			if !errors.Is(err,failure) { t.Fatalf("lost true NM error: %v",err) }
 			if activationCalled==tc.failAdd { t.Fatalf("activation after incomplete Add: called=%v",activationCalled) }
 			persisted:=readNML3Intent(t,stage)
@@ -148,7 +148,7 @@ func TestNML3RefusesNoPrivacyOrForeignLinkBeforeMutation(t *testing.T) {
 				activate:func(context.Context,dbus.ObjectPath)(dbus.ObjectPath,error){called=true;return "/",nil},
 			}
 			stage:=newNML3Stager(dir,fixedBootID("boot-a"))
-			_,err:=stage.stageWith(context.Background(),session.SessionID,tc.mark,testNML3Plan(),mutation,failName)
+			_,err:=stage.stageWith(context.Background(),session.SessionID,tc.mark,testNML3Plan(),mutation,failName,func(context.Context,networkSessionProtection)error{return nil})
 			if err==nil||called {t.Fatalf("foreign/unprotected NM mutation: err=%v called=%v",err,called)}
 			if _,err:=os.Stat(stage.path()); !errors.Is(err,os.ErrNotExist){t.Fatalf("intent persisted before accepted admission: %v",err)}
 		})
