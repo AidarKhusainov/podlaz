@@ -57,8 +57,7 @@ func verifyNMOwnedTunFDKernelIdentityWith(fd int, expected nmTunFDKernelIdentity
 	if err != nil {
 		return fmt.Errorf("inspect inherited NM TUN FD: %w", err)
 	}
-	if actual.Flags&unix.IFF_TUN == 0 || actual.Flags&unix.IFF_TAP != 0 ||
-		actual.Flags&unix.IFF_MULTI_QUEUE != 0 || !actual.LinkUp ||
+	if actual.Flags != unix.IFF_TUN|unix.IFF_NO_PI || !actual.LinkUp ||
 		actual.Identity != expected {
 		return errors.New("inherited NM TUN FD does not match exact kernel identity")
 	}
