@@ -91,13 +91,29 @@ func observeNMOwnedTunFDKernelIdentity(fd int) (nmTunFDKernelObservation, error)
 	if attrs.Name != name || attrs.Index <= 0 {
 		return nmTunFDKernelObservation{}, errors.New("TUN netlink name/index changed during inspection")
 	}
+	// TUNGETDEVNETNS (_IO('T', 227)) returns a namespace FD for the
+	// actual TUN device, not the original socket or the querying process.
+	// It requires CAP_NET_ADMIN, hence only a privileged broker may call it.
+	const tunGetDeviceNetNS = 0x54e3
+	nsFD, err := unix.IoctlGetInt(fd, tunGetDeviceNetNS)
+	if err != nil {
+		return nmTunFDKernelObservation{}, fmt.Errorf("read TUN device namespace: %w", err)
+	}
+	defer unix.Close(nsFD)
+	var deviceNS unix.Stat_t
+	if err := unix.Fstat(nsFD, &deviceNS); err != nil {
+		return nmTunFDKernelObservation{}, fmt.Errorf("stat TUN device namespace: %w", err)
+	}
 	stat, err := os.Stat("/proc/self/ns/net")
 	if err != nil {
-		return nmTunFDKernelObservation{}, fmt.Errorf("read current network namespace: %w", err)
+		return nmTunFDKernelObservation{}, fmt.Errorf("read broker network namespace: %w", err)
 	}
 	ns, ok := stat.Sys().(*syscall.Stat_t)
 	if !ok {
-		return nmTunFDKernelObservation{}, errors.New("network namespace inode unavailable")
+		return nmTunFDKernelObservation{}, errors.New("broker network namespace inode unavailable")
+	}
+	if deviceNS.Ino != ns.Ino || uint64(deviceNS.Dev) != uint64(ns.Dev) {
+		return nmTunFDKernelObservation{}, errors.New("TUN device moved outside broker network namespace")
 	}
 	return nmTunFDKernelObservation{
 		Identity: nmTunFDKernelIdentity{
