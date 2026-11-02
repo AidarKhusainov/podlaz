@@ -15,14 +15,15 @@ func TestNMOwnedXrayCompatibilityValidatesExactConfigWithoutFallback(t *testing.
 	script := filepath.Join(dir, "official-xray")
 	logPath := filepath.Join(dir, "invocation.txt")
 	t.Setenv("XRAY_TEST_RECORD", logPath)
-	command := "#!/bin/sh\n" +
-		"test \"$1\" = run && test \"$2\" = -test && test \"$3\" = -config || exit 12\n" +
-		"test -f \"$4\" || exit 13\n" +
-		"printf 'run -test -config\n' >> \"$XRAY_TEST_RECORD\"\n" +
-		"if grep -q 'unsupported' \"$4\"; then\n" +
-		"  echo 'provider secret in Xray diagnostic' >&2\n" +
-		"  exit 23\n" +
-		"fi\n"
+	command := `#!/bin/sh
+test "$1" = run && test "$2" = -test && test "$3" = -config || exit 12
+test -f "$4" || exit 13
+printf 'run -test -config\n' >> "$XRAY_TEST_RECORD"
+if grep -q 'unsupported' "$4"; then
+  echo 'provider secret in Xray diagnostic' >&2
+  exit 23
+fi
+`
 	if err := os.WriteFile(script, []byte(command), 0o700); err != nil {
 		t.Fatal(err)
 	}
