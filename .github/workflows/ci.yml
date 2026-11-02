@@ -84,9 +84,6 @@ jobs:
             go.mod
             packaging/package-toolchain.env
 
-      - name: Print exact formatting patch for new NM L3 files (temporary)
-        run: gofmt -d internal/daemon/nm_tun_l3_linux.go internal/daemon/nm_tun_l3_linux_test.go
-
       - name: Go fmt, test, and vet
         run: |
           set -o pipefail
