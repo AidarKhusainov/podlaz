@@ -68,13 +68,14 @@ func (s nmL3Stager) loadIntent() (nmL3Intent, bool, error) {
 	if intent.BootID != boot {
 		return nmL3Intent{}, false, errors.New("NM L3 intent belongs to a different boot")
 	}
-	// The persisted UUID/paths are evidence only. Never adopt a matching NM
-	// object when the original Network Session authority is missing or changed.
-	session, exists, err := s.session.Load()
+	// Read the parent Network Session without invoking Load(): its ordinary
+	// startup recovery may remove stale boot state, which is forbidden for a
+	// read-only NM inspection. Invalid or missing evidence stays untouched.
+	session, err := s.readExactSessionWithoutMutation()
 	if err != nil {
 		return nmL3Intent{}, false, err
 	}
-	if !exists || session.BootID != intent.BootID || session.SessionID != intent.SessionID {
+	if session.BootID != intent.BootID || session.SessionID != intent.SessionID {
 		return nmL3Intent{}, false, errors.New("NM L3 intent has no matching Network Session")
 	}
 	return intent, true, nil
@@ -110,4 +111,48 @@ func validateNML3Intent(intent nmL3Intent) error {
 		return errors.New("unknown NM L3 intent stage")
 	}
 	return nil
+}
+
+// readExactSessionWithoutMutation deliberately does not use the normal
+// Network Session loader: legacy migration and previous-boot reconciliation
+// may have filesystem effects, which inspection must not perform.
+func (s nmL3Stager) readExactSessionWithoutMutation() (networkSessionState, error) {
+	path := filepath.Join(s.session.runtimeDir, networkSessionContinuationFileName)
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return networkSessionState{}, fmt.Errorf("read NM parent session authority: %w", err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return networkSessionState{}, fmt.Errorf("inspect NM parent session authority: %w", err)
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0o777 != 0o600 ||
+		stat.Uid != uint32(os.Geteuid()) || stat.Nlink != 1 ||
+		stat.Size <= 0 || stat.Size > maxNetworkSessionStateBytes {
+		return networkSessionState{}, errors.New("invalid NM parent session file identity")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxNetworkSessionStateBytes+1))
+	if err != nil {
+		return networkSessionState{}, err
+	}
+	if len(data) > maxNetworkSessionStateBytes {
+		return networkSessionState{}, errors.New("NM parent session exceeds size limit")
+	}
+	var session networkSessionState
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&session); err != nil {
+		return networkSessionState{}, fmt.Errorf("decode NM parent session authority: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return networkSessionState{}, errors.New("NM parent session has trailing data")
+	}
+	if err := validateNetworkSessionState(session); err != nil {
+		return networkSessionState{}, err
+	}
+	return session, nil
 }
