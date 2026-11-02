@@ -278,11 +278,16 @@ disposable guests already require real protected DNS/HTTPS, natural
 FULL, NM PID restart while Xray remains live, Xray SIGKILL/rebind,
 wrong-FD/ifindex/MTU collisions, guarded IPv4/IPv6 egress, exact
 cleanup and foreign-state survival. The additional negative duplicated-FD
-witness tests a distinct kernel lifetime property. It does **not**
-exercise adversarial FD transfer across process boundaries, forced
-NM *device replacement* with ifindex reuse, unattended daemon restart
-or boot recovery, or all supported provider graph classes. Those
-remain explicit unqualified blockers regardless of CI success.
+witness tests a distinct kernel lifetime property. The disposable
+matrix also forcibly deactivates the NM profile after Xray exit, requires
+the old device to disappear, requires the stale duplicated FD to return
+`EBADFD` before and after a new NM activation, and verifies protected
+physical egress in both states. **This is a bounded kernel device-deletion
+observation, not an atomic generation fence:** it does not control
+ifindex reuse, adversarial FD transfer across process boundaries,
+unattended daemon restart or boot recovery, or all supported provider
+graph classes. Those remain explicit unqualified blockers regardless
+of CI success.
 
 Any future implementation has one writer per resource: NetworkManager for
 delegated link L3, DNS and VPN/device activation where applicable; Podlaz for

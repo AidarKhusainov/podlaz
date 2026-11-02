@@ -34,6 +34,7 @@ EVIDENCE_KEYS=(
   tun.invalid_fd_rejected
   tun.lost_fd_rejected
   tun.duplicate_fd_survives_close
+  tun.nm_device_replacement
   tun.identity_collision_rejected
   tun.child_identity_rejected
   tun.restricted_xray
@@ -183,7 +184,7 @@ run_scenario() {
     >"${PRIVATE_ROOT}/nm-owned-result.stdout" 2>"${PRIVATE_ROOT}/nm-owned-result.stderr"
 
   local label
-  for label in nm-owned-link-and-l3 nm-owned-foreign-link-collision nm-owned-invalid-fd-rejected nm-owned-lost-fd-rejected nm-owned-duplicate-fd-survives-close nm-owned-identity-collision-rejected nm-owned-child-identity-rejected nm-owned-xray-attached nm-owned-xray-restricted nm-owned-protected-traffic nm-owned-natural-full nm-owned-fault-recovery nm-owned-live-nm-restart nm-owned-nm-post-xray-active nm-owned-result; do
+  for label in nm-owned-link-and-l3 nm-owned-foreign-link-collision nm-owned-invalid-fd-rejected nm-owned-lost-fd-rejected nm-owned-duplicate-fd-survives-close nm-owned-device-replacement-stale-fd-detached nm-owned-identity-collision-rejected nm-owned-child-identity-rejected nm-owned-xray-attached nm-owned-xray-restricted nm-owned-protected-traffic nm-owned-natural-full nm-owned-fault-recovery nm-owned-live-nm-restart nm-owned-nm-post-xray-active nm-owned-result; do
     grep -Fx "${label}=pass" "${PRIVATE_ROOT}/nm-owned-result.stdout" >/dev/null
   done
   if [[ "${PODLAZ_E2E_NM_TUN_PROFILE}" == grouped ]]; then
@@ -197,6 +198,7 @@ run_scenario() {
   record_evidence tun.lost_fd_rejected pass
   # Negative observation: owner close did NOT revoke a duplicated TUN FD.
   record_evidence tun.duplicate_fd_survives_close pass
+  record_evidence tun.nm_device_replacement pass
   record_evidence tun.identity_collision_rejected pass
   record_evidence tun.child_identity_rejected pass
   record_evidence tun.restricted_xray pass

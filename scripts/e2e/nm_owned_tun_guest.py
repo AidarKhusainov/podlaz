@@ -543,6 +543,61 @@ def _prove_duplicated_fd_outlives_origin(profile_id: str, index: int) -> None:
     print("nm-owned-duplicate-fd-survives-close=pass", flush=True)
 
 
+
+def _prove_nm_device_replacement_detaches_stale_fd(profile_id: str, index: int) -> None:
+    """Guest-only forced NM device replacement, distinct from daemon restart.
+
+    Deleting the kernel device invalidates its old attached queue. That is
+    NOT a revoke-all-duplicated-FDs contract for a still-live device.
+    Require actual device absence before activating the next NM generation.
+    """
+    import errno
+
+    if _assert_nm_owned_link(profile_id) != index:
+        raise ValueError("NM identity lost before device replacement")
+    original = os.open("/dev/net/tun", os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
+    stale = None
+    try:
+        request = bytearray(struct.pack("16sH22x", b"podlaz0", 0x0001 | 0x1000))
+        fcntl.ioctl(original, 0x400454ca, request, True)
+        if request[:16].split(bytes([0]), 1)[0] != b"podlaz0":
+            raise ValueError("replacement fixture attached foreign TUN")
+        stale = os.dup(original)
+    finally:
+        os.close(original)
+    try:
+        run("nmcli", "-w", "25", "connection", "down", profile_id, timeout=30)
+        if _profile_present(profile_id, active=True):
+            raise ValueError("NM replacement did not deactivate old profile")
+        if Path("/sys/class/net/podlaz0").exists():
+            raise ValueError("NM replacement did not remove old TUN device")
+
+        def require_stale_detached() -> None:
+            try:
+                fcntl.ioctl(stale, 0x800454d2, bytearray(40), True)
+            except OSError as exc:
+                # Linux tun_chr_ioctl returns EBADFD once tun_detach_all
+                # has disassociated the old file from the deleted device.
+                if exc.errno == errno.EBADFD:
+                    return
+                raise ValueError("unqualified old TUN FD failure") from exc
+            raise ValueError("old TUN FD remained attached across NM replacement")
+
+        require_stale_detached()
+        _prove_physical_drop()
+        _prove_ipv6_no_leak()
+        run("nmcli", "-w", "45", "connection", "up", profile_id, timeout=50)
+        if _assert_nm_owned_link(profile_id) <= 0:
+            raise ValueError("replacement NM link identity unavailable")
+        require_stale_detached()
+        _prove_physical_drop()
+        _prove_ipv6_no_leak()
+    finally:
+        if stale is not None:
+            os.close(stale)
+    print("nm-owned-device-replacement-stale-fd-detached=pass", flush=True)
+
+
 def _prove_child_in_process_identity_rejection(
     config_file: Path, profile_id: str, index: int,
     output: object, errors: object,
@@ -764,6 +819,8 @@ def run_guest(config_file: Path, *, grouped: bool = False) -> None:
             _prove_physical_drop()
             _prove_ipv6_no_leak()
             print("nm-owned-nm-post-xray-active=pass", flush=True)
+            stage("nm-device-replacement")
+            _prove_nm_device_replacement_detaches_stale_fd(profile_id, nm_index)
         except Exception:
             print("nm-owned-failure-step=" + CURRENT_STEP, flush=True)
             raise
