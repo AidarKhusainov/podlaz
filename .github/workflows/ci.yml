@@ -84,9 +84,6 @@ jobs:
             go.mod
             packaging/package-toolchain.env
 
-      - name: Print NM L3 recovery gofmt patch (temporary)
-        run: gofmt -d internal/daemon/nm_tun_l3_intent_linux.go internal/daemon/nm_tun_l3_intent_linux_test.go
-
       - name: Go fmt, test, and vet
         run: |
           set -o pipefail

@@ -19,16 +19,16 @@ func TestNML3ReadOnlyIntentRecoveryPreservesExactProgress(t *testing.T) {
 			session := protectedNMTestSession(t, dir)
 			store := newNML3Stager(dir, fixedBootID("boot-a"))
 			intent := nmL3Intent{
-				Schema: nmL3IntentSchema,
-				Owner: networkSessionStateOwner,
-				BootID: "boot-a",
+				Schema:    nmL3IntentSchema,
+				Owner:     networkSessionStateOwner,
+				BootID:    "boot-a",
 				SessionID: session.SessionID,
-				UUID: "abcdef00-0000-4000-8000-000000000002",
+				UUID:      "abcdef00-0000-4000-8000-000000000002",
 				Interface: "podlaz0",
-				IPv4: "198.18.0.17/32",
-				DNS: "1.1.1.1",
-				MTU: 1500, Metric: 10,
-				Mark: 101,
+				IPv4:      "198.18.0.17/32",
+				DNS:       "1.1.1.1",
+				MTU:       1500, Metric: 10,
+				Mark:  101,
 				Stage: stage,
 			}
 			if stage == "profile-added" || stage == "activating" {
@@ -70,7 +70,7 @@ func TestNML3ReadOnlyIntentRejectsForeignOrBrokenStateWithoutMutation(t *testing
 			entry := nmL3Intent{
 				Schema: nmL3IntentSchema, Owner: networkSessionStateOwner,
 				BootID: "boot-a", SessionID: session.SessionID,
-				UUID: "abcdef00-0000-4000-8000-000000000002",
+				UUID:      "abcdef00-0000-4000-8000-000000000002",
 				Interface: "podlaz0", IPv4: "198.18.0.17/32",
 				DNS: "1.1.1.1", MTU: 1500, Metric: 10, Mark: 101, Stage: "planned",
 			}
@@ -100,7 +100,7 @@ func TestNML3ReadOnlyIntentRejectsDifferentBootAndSession(t *testing.T) {
 	intent := nmL3Intent{
 		Schema: nmL3IntentSchema, Owner: networkSessionStateOwner,
 		BootID: "boot-a", SessionID: session.SessionID,
-		UUID: "abcdef00-0000-4000-8000-000000000002",
+		UUID:      "abcdef00-0000-4000-8000-000000000002",
 		Interface: "podlaz0", IPv4: "198.18.0.17/32",
 		DNS: "1.1.1.1", MTU: 1500, Metric: 10, Mark: 101, Stage: "planned",
 	}
@@ -128,7 +128,7 @@ func TestNML3ReadOnlyIntentDoesNotCleanupPreviousBootSessionState(t *testing.T) 
 	intent := nmL3Intent{
 		Schema: nmL3IntentSchema, Owner: networkSessionStateOwner,
 		BootID: "boot-a", SessionID: session.SessionID,
-		UUID: "abcdef00-0000-4000-8000-000000000002",
+		UUID:      "abcdef00-0000-4000-8000-000000000002",
 		Interface: "podlaz0", IPv4: "198.18.0.17/32",
 		DNS: "1.1.1.1", MTU: 1500, Metric: 10, Mark: 101, Stage: "planned",
 	}
@@ -189,4 +189,3 @@ func TestNML3ReadOnlyIntentRefusesSymlinksUnknownFieldsAndPermissions(t *testing
 		t.Fatalf("symlink intent accepted: %v %v", exists, err)
 	}
 }
-
