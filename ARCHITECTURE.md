@@ -81,6 +81,16 @@ Every successful mutation is reported to the transaction boundary immediately an
 
 Xray owns creation/lifetime of the native `podlaz0` TUN link. The daemon may configure only the exact link identity that appeared for the tracked child and owns only its exact allocated session address and surrounding Podlaz resources. Stopping the tracked Xray process is the release mechanism for the Xray-owned link.
 
+A separately checksum-pinned official Xray v26.10.31 executable is staged as
+`/usr/lib/podlaz/xray-nm-owned` for a future optional NM-owned TUN. It is
+**dormant**, not an activated NetworkManager backend: `podlazd.service` still
+uses the pinned v26.3.27 `/usr/lib/podlaz/xray`. There is no user-visible
+selection, new FD handoff, change in link/L3/DNS authority, or network mutation
+in this packaging stage. Installing and validating the newer binary does not
+establish generation fencing, FD escape confinement, safe admission, continuous
+Privacy Envelope, or desktop acceptance. Never treat this package stage as
+authorization to start Xray on an NM-owned TUN.
+
 `systemd-resolved` and nftables verification are composition checks, not presence checks. Extra/foreign state inside a Podlaz-owned resource is ambiguous and fails closed rather than being normalized away.
 
 ## Network Session and Privacy Envelope
