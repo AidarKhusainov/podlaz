@@ -38,7 +38,7 @@ func verifyNMOwnedTunFDKernelIdentity(fd int, expected nmTunFDKernelIdentity) er
 }
 
 func verifyNMOwnedTunFDKernelIdentityWith(fd int, expected nmTunFDKernelIdentity, observe func(int) (nmTunFDKernelObservation, error)) error {
-	if fd < 0 || observe == nil || expected.Index <= 0 || expected.MTU <= 0 ||
+	if fd < 3 || observe == nil || expected.Index <= 0 || expected.MTU <= 0 ||
 		expected.NetNSDevice == 0 || expected.NetNSInode == 0 || expected.Name == "" {
 		return errors.New("NM TUN FD admission has incomplete kernel authority")
 	}
@@ -87,6 +87,9 @@ func observeNMOwnedTunFDKernelIdentity(fd int) (nmTunFDKernelObservation, error)
 	attrs := link.Attrs()
 	if attrs == nil {
 		return nmTunFDKernelObservation{}, errors.New("TUN netlink attributes unavailable")
+	}
+	if attrs.Name != name || attrs.Index <= 0 {
+		return nmTunFDKernelObservation{}, errors.New("TUN netlink name/index changed during inspection")
 	}
 	stat, err := os.Stat("/proc/self/ns/net")
 	if err != nil {

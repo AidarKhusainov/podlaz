@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -42,6 +43,21 @@ func TestNMOwnedTunFDKernelIdentityRejectsIncompleteAuthorityWithoutInspectingFD
 			})
 			if err == nil || called {
 				t.Fatalf("incomplete trusted identity must fail before observation: err=%v called=%v", err, called)
+			}
+		})
+	}
+}
+
+func TestNMOwnedTunFDKernelIdentityRejectsStandardDescriptorNumbers(t *testing.T) {
+	for _, fd := range []int{-1, 0, 1, 2} {
+		t.Run(fmt.Sprint(fd), func(t *testing.T) {
+			called := false
+			err := verifyNMOwnedTunFDKernelIdentityWith(fd, testNMFDIdentity(), func(int) (nmTunFDKernelObservation, error) {
+				called = true
+				return nmTunFDKernelObservation{}, nil
+			})
+			if err == nil || called {
+				t.Fatalf("standard descriptor number must not be admitted: fd=%d err=%v called=%v", fd, err, called)
 			}
 		})
 	}
