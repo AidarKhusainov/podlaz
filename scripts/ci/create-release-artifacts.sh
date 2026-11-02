@@ -3,6 +3,14 @@ set -euo pipefail
 
 : "${VERSION:?VERSION is required}"
 
+# Check the compiler embedded in all staged binaries, not just the currently
+# selected Go toolchain. Never archive binaries built with a vulnerable Go.
+for package_root in dist/package-root dist-arm64/package-root; do
+  for binary in podlaz podlazd; do
+    bash scripts/ci/require-patched-go.sh --binary "${package_root}/usr/bin/${binary}"
+  done
+done
+
 create_binary_archive() {
   local arch="$1"
   local root_dir="$2"
