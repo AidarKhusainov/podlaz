@@ -13,7 +13,7 @@ import (
 
 func validExpectedNMTun() nmTunDBusAuthority {
 	return nmTunDBusAuthority{
-		UUID:         "00000000-0000-4000-8000-000000000002",
+		UUID:         "abcdef00-0000-4000-8000-000000000002",
 		Name:         "podlaz0",
 		MTU:          1500,
 		DevicePath:   "/org/freedesktop/NetworkManager/Devices/15",
