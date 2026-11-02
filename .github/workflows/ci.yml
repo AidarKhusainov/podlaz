@@ -84,6 +84,9 @@ jobs:
             go.mod
             packaging/package-toolchain.env
 
+      - name: Show precise formatting diff for NM active-L3 verification (temporary)
+        run: gofmt -d internal/daemon/nm_tun_l3_active_linux.go internal/daemon/nm_tun_l3_active_linux_test.go
+
       - name: Go fmt, test, and vet
         run: |
           set -o pipefail
