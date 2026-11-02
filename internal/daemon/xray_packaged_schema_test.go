@@ -46,8 +46,8 @@ func TestPackagedNMOwnedXraySecurityBoundary(t *testing.T) {
 	}
 	dir := t.TempDir()
 	opts := engine.XrayTunConfigOptions{
-		Name: engine.DefaultXrayTunName,
-		MTU: engine.DefaultXrayTunMTU,
+		Name:                    engine.DefaultXrayTunName,
+		MTU:                     engine.DefaultXrayTunMTU,
 		OutboundAddressOverride: "203.0.113.10",
 	}
 
