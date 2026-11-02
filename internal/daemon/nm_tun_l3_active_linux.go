@@ -23,6 +23,7 @@ type nmL3ActiveObservation struct {
 	OwnerBefore string
 	OwnerAfter string
 	UUID string
+	ConnectionType string
 	SettingsPath dbus.ObjectPath
 	DevicePath dbus.ObjectPath
 	LookupDevice dbus.ObjectPath
@@ -118,7 +119,7 @@ func (s nmL3Stager) verifyActiveL3With(
 func nmL3SessionProtected(session networkSessionState, intent nmL3Intent) bool {
 	p := session.Protection
 	if session.BootID != intent.BootID || session.SessionID != intent.SessionID ||
-		session.Intent != networkSessionIntentResume || session.Replacement != nil ||
+		session.Intent != networkSessionIntentResume || session.Request.Mode != "tun" || session.Replacement != nil ||
 		p == nil || p.State != networkSessionProtectionArmed ||
 		p.CompositionVersion != privacyEnvelopeMarkedCompositionVersion ||
 		p.TunInterface != intent.Interface || len(p.PreviousEgressMarks) != 0 {
@@ -134,8 +135,8 @@ func nmL3SessionProtected(session networkSessionState, intent nmL3Intent) bool {
 
 func verifyNML3ActiveEvidence(expected nmL3Intent, observed nmL3ActiveObservation) error {
 	if !strings.HasPrefix(observed.OwnerBefore, ":") || observed.OwnerBefore != observed.OwnerAfter ||
-		observed.UUID != expected.UUID || observed.SettingsPath != expected.SettingsPath ||
-		observed.DevicePath == "" || observed.DevicePath != observed.LookupDevice ||
+		observed.UUID != expected.UUID || observed.ConnectionType != "tun" || observed.SettingsPath != expected.SettingsPath ||
+		!validNMObjectPath(observed.DevicePath, "/org/freedesktop/NetworkManager/Devices/") || observed.DevicePath != observed.LookupDevice ||
 		observed.DeviceActive != expected.ActivePath ||
 		observed.Interface != expected.Interface || observed.IPInterface != expected.Interface ||
 		observed.MTU != expected.MTU || observed.DeviceType != nmDeviceTypeTun ||
@@ -236,6 +237,9 @@ func observeNML3Active(ctx context.Context, expected nmL3Intent) (nmL3ActiveObse
 	var obs nmL3ActiveObservation
 	obs.OwnerBefore = owner
 	if obs.UUID, err = readNMTunProperty[string](ctx, active, nmActiveInterface, "Uuid"); err != nil {
+		return obs, err
+	}
+	if obs.ConnectionType, err = readNMTunProperty[string](ctx, active, nmActiveInterface, "Type"); err != nil {
 		return obs, err
 	}
 	if obs.SettingsPath, err = readNMTunProperty[dbus.ObjectPath](ctx, active, nmActiveInterface, "Connection"); err != nil {
