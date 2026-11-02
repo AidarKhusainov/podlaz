@@ -20,35 +20,35 @@ const nmDeviceTunInterface = "org.freedesktop.NetworkManager.Device.Tun"
 // nmL3ActiveObservation is read-only D-Bus evidence. In particular the
 // observed device path is NOT authority for adoption, cleanup, or FD handoff.
 type nmL3ActiveObservation struct {
-	OwnerBefore string
-	OwnerAfter string
-	UUID string
+	OwnerBefore    string
+	OwnerAfter     string
+	UUID           string
 	ConnectionType string
-	SettingsPath dbus.ObjectPath
-	DevicePath dbus.ObjectPath
-	LookupDevice dbus.ObjectPath
-	DeviceActive dbus.ObjectPath
-	Interface string
-	IPInterface string
-	MTU uint32
-	DeviceType uint32
-	DeviceState uint32
-	DeviceManaged bool
-	TunMode string
-	TunNoPI bool
-	TunVnetHdr bool
-	TunMultiQueue bool
-	TunOwner int64
-	TunGroup int64
-	ActiveState uint32
-	Default4 bool
-	Default6 bool
-	IP4Path dbus.ObjectPath
-	Addresses []map[string]dbus.Variant
-	Routes []map[string]dbus.Variant
-	Nameservers []map[string]dbus.Variant
-	Searches []string
-	DNSPriority int32
+	SettingsPath   dbus.ObjectPath
+	DevicePath     dbus.ObjectPath
+	LookupDevice   dbus.ObjectPath
+	DeviceActive   dbus.ObjectPath
+	Interface      string
+	IPInterface    string
+	MTU            uint32
+	DeviceType     uint32
+	DeviceState    uint32
+	DeviceManaged  bool
+	TunMode        string
+	TunNoPI        bool
+	TunVnetHdr     bool
+	TunMultiQueue  bool
+	TunOwner       int64
+	TunGroup       int64
+	ActiveState    uint32
+	Default4       bool
+	Default6       bool
+	IP4Path        dbus.ObjectPath
+	Addresses      []map[string]dbus.Variant
+	Routes         []map[string]dbus.Variant
+	Nameservers    []map[string]dbus.Variant
+	Searches       []string
+	DNSPriority    int32
 }
 
 // verifyActiveL3 checks actual NM-owned L3 under an already-armed, real

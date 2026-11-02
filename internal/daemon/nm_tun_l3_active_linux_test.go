@@ -19,20 +19,20 @@ func testNML3ActivatingIntent(t *testing.T) (nmL3Stager, nmL3Intent) {
 	session := protectedNMTestSession(t, dir)
 	stager := newNML3Stager(dir, fixedBootID("boot-a"))
 	intent := nmL3Intent{
-		Schema: nmL3IntentSchema,
-		Owner: networkSessionStateOwner,
-		BootID: "boot-a",
-		SessionID: session.SessionID,
-		UUID: "abcdef00-0000-4000-8000-000000000002",
-		Interface: "podlaz0",
-		IPv4: "198.18.0.17/32",
-		DNS: "192.0.2.53",
-		MTU: 1500,
-		Metric: 10,
-		Mark: 101,
-		Stage: "activating",
+		Schema:       nmL3IntentSchema,
+		Owner:        networkSessionStateOwner,
+		BootID:       "boot-a",
+		SessionID:    session.SessionID,
+		UUID:         "abcdef00-0000-4000-8000-000000000002",
+		Interface:    "podlaz0",
+		IPv4:         "198.18.0.17/32",
+		DNS:          "192.0.2.53",
+		MTU:          1500,
+		Metric:       10,
+		Mark:         101,
+		Stage:        "activating",
 		SettingsPath: "/org/freedesktop/NetworkManager/Settings/7",
-		ActivePath: "/org/freedesktop/NetworkManager/ActiveConnection/12",
+		ActivePath:   "/org/freedesktop/NetworkManager/ActiveConnection/12",
 	}
 	if err := stager.persist(intent); err != nil {
 		t.Fatal(err)
@@ -44,34 +44,34 @@ func testNML3ValidActiveObservation(i nmL3Intent) nmL3ActiveObservation {
 	prefix, _ := netip.ParsePrefix(i.IPv4)
 	v := dbus.MakeVariant
 	return nmL3ActiveObservation{
-		OwnerBefore: ":1.17",
-		OwnerAfter: ":1.17",
-		UUID: i.UUID,
+		OwnerBefore:    ":1.17",
+		OwnerAfter:     ":1.17",
+		UUID:           i.UUID,
 		ConnectionType: "tun",
-		SettingsPath: i.SettingsPath,
-		DevicePath: "/org/freedesktop/NetworkManager/Devices/25",
-		LookupDevice: "/org/freedesktop/NetworkManager/Devices/25",
-		DeviceActive: i.ActivePath,
-		Interface: i.Interface,
-		IPInterface: i.Interface,
-		MTU: i.MTU,
-		DeviceType: nmDeviceTypeTun,
-		DeviceState: nmDeviceStateActivated,
-		DeviceManaged: true,
-		TunMode: "tun",
-		TunNoPI: true,
-		TunOwner: 0,
-		TunGroup: 0,
-		ActiveState: nmActiveStateActivated,
-		Default4: true,
-		IP4Path: "/org/freedesktop/NetworkManager/IP4Config/10",
-		Addresses: []map[string]dbus.Variant{{"address": v(prefix.Addr().String()), "prefix": v(uint32(prefix.Bits()))}},
+		SettingsPath:   i.SettingsPath,
+		DevicePath:     "/org/freedesktop/NetworkManager/Devices/25",
+		LookupDevice:   "/org/freedesktop/NetworkManager/Devices/25",
+		DeviceActive:   i.ActivePath,
+		Interface:      i.Interface,
+		IPInterface:    i.Interface,
+		MTU:            i.MTU,
+		DeviceType:     nmDeviceTypeTun,
+		DeviceState:    nmDeviceStateActivated,
+		DeviceManaged:  true,
+		TunMode:        "tun",
+		TunNoPI:        true,
+		TunOwner:       0,
+		TunGroup:       0,
+		ActiveState:    nmActiveStateActivated,
+		Default4:       true,
+		IP4Path:        "/org/freedesktop/NetworkManager/IP4Config/10",
+		Addresses:      []map[string]dbus.Variant{{"address": v(prefix.Addr().String()), "prefix": v(uint32(prefix.Bits()))}},
 		Routes: []map[string]dbus.Variant{
 			{"dest": v("198.18.0.17"), "prefix": v(uint32(32)), "metric": v(i.Metric)},
 			{"dest": v("0.0.0.0"), "prefix": v(uint32(0)), "metric": v(i.Metric)},
 		},
 		Nameservers: []map[string]dbus.Variant{{"address": v(i.DNS)}},
-		Searches: []string{"~."},
+		Searches:    []string{"~."},
 		DNSPriority: -30000,
 	}
 }
@@ -108,13 +108,21 @@ func TestNML3ActiveEvidenceRequiresExactNMIdentityRouteAndDNS(t *testing.T) {
 		{"not-default", func(v *nmL3ActiveObservation) { v.Default4 = false }},
 		{"unexpected-ipv6-default", func(v *nmL3ActiveObservation) { v.Default6 = true }},
 		{"foreign-ipconfig", func(v *nmL3ActiveObservation) { v.IP4Path = "/" }},
-		{"wrong-ip", func(v *nmL3ActiveObservation) { v.Addresses[0] = map[string]dbus.Variant{"address": dbus.MakeVariant("198.18.0.22"), "prefix": dbus.MakeVariant(uint32(32))} }},
+		{"wrong-ip", func(v *nmL3ActiveObservation) {
+			v.Addresses[0] = map[string]dbus.Variant{"address": dbus.MakeVariant("198.18.0.22"), "prefix": dbus.MakeVariant(uint32(32))}
+		}},
 		{"additional-address", func(v *nmL3ActiveObservation) { v.Addresses = append(v.Addresses, v.Addresses[0]) }},
 		{"missing-route", func(v *nmL3ActiveObservation) { v.Routes = v.Routes[:1] }},
 		{"duplicate-default", func(v *nmL3ActiveObservation) { v.Routes = append(v.Routes, v.Routes[1]) }},
-		{"foreign-default-metric", func(v *nmL3ActiveObservation) { v.Routes[1] = map[string]dbus.Variant{"dest": dbus.MakeVariant("0.0.0.0"), "prefix": dbus.MakeVariant(uint32(0)), "metric": dbus.MakeVariant(uint32(22))} }},
-		{"foreign-default-gateway", func(v *nmL3ActiveObservation) { v.Routes[1] = map[string]dbus.Variant{"dest": dbus.MakeVariant("0.0.0.0"), "prefix": dbus.MakeVariant(uint32(0)), "metric": dbus.MakeVariant(uint32(10)), "next-hop": dbus.MakeVariant("192.0.2.1")} }},
-		{"wrong-DNS", func(v *nmL3ActiveObservation) { v.Nameservers[0] = map[string]dbus.Variant{"address": dbus.MakeVariant("192.0.2.99")} }},
+		{"foreign-default-metric", func(v *nmL3ActiveObservation) {
+			v.Routes[1] = map[string]dbus.Variant{"dest": dbus.MakeVariant("0.0.0.0"), "prefix": dbus.MakeVariant(uint32(0)), "metric": dbus.MakeVariant(uint32(22))}
+		}},
+		{"foreign-default-gateway", func(v *nmL3ActiveObservation) {
+			v.Routes[1] = map[string]dbus.Variant{"dest": dbus.MakeVariant("0.0.0.0"), "prefix": dbus.MakeVariant(uint32(0)), "metric": dbus.MakeVariant(uint32(10)), "next-hop": dbus.MakeVariant("192.0.2.1")}
+		}},
+		{"wrong-DNS", func(v *nmL3ActiveObservation) {
+			v.Nameservers[0] = map[string]dbus.Variant{"address": dbus.MakeVariant("192.0.2.99")}
+		}},
 		{"extra-DNS", func(v *nmL3ActiveObservation) { v.Nameservers = append(v.Nameservers, v.Nameservers[0]) }},
 		{"wrong-search-domain", func(v *nmL3ActiveObservation) { v.Searches[0] = "example.org" }},
 		{"DNS-priority", func(v *nmL3ActiveObservation) { v.DNSPriority = -200 }},
