@@ -117,7 +117,14 @@ policy. It persists exact boot/session/UUID intent **before** the first
 mutating NM D-Bus operation and records the exact returned settings/active
 object paths after each step. Failed or ambiguous operations retain this intent
 and the Privacy Envelope; missing paths, matching link names or vanished
-processes do not authorize cleanup. This code is **not wired to connect** and
+processes do not authorize cleanup. An independent read-only active-L3
+inspection rechecks the exact persisted session/intent, verifies the live
+Privacy Envelope both before and after inspection, pins D-Bus properties to
+one unique NM process owner, and compares TUN mode/owner, address, main
+default route and metric, DNS and IPv6 default routing against durable intent.
+NM active state or an observed default route alone never proves Internet FULL,
+FD generation admission, supervised Xray ownership, safe cleanup or privacy
+under process churn. This code is **not wired to connect** and
 does not admit an inherited FD or establish a protected Xray generation.
 Production still requires independent exact kernel authority checks,
 a persisted generation, privileged FD broker and restricted process cohort.
