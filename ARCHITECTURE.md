@@ -81,6 +81,53 @@ Every successful mutation is reported to the transaction boundary immediately an
 
 Xray owns creation/lifetime of the native `podlaz0` TUN link. The daemon may configure only the exact link identity that appeared for the tracked child and owns only its exact allocated session address and surrounding Podlaz resources. Stopping the tracked Xray process is the release mechanism for the Xray-owned link.
 
+### Optional NetworkManager-owned TUN boundary (not yet enabled)
+
+An opt-in NetworkManager-owned native TUN backend is an approved implementation
+direction, **not a currently shipped capability**. It is distinct from the
+NetworkManager VPN Plugin API: no synthetic external VPN gateway, fake online
+response or connectivity-check bypass may be used to make NM report FULL.
+The existing Xray-owned backend stays the default and retains its established
+lifecycle, package and provider compatibility.
+
+For the proposed backend, NetworkManager exclusively owns the TUN link and
+its L3 address, main-table default route and DNS. Podlaz exclusively owns
+the transaction-backed marked provider underlay, durable Network Session,
+Privacy Envelope and overall lifecycle. Xray consumes an inherited TUN FD
+and owns only the packet data plane and provider-specific routing. No legacy
+Podlaz link/L3/DNS writer may run concurrently with NM's writers. All
+supported typed and schema-opaque native/grouped profiles must preserve
+their provider-owned routing/authentication semantics and carry exact
+Podlaz-owned marks on all transport outbounds; inability to qualify a
+profile fails closed rather than silently selecting another backend.
+
+The production trust boundary includes the Linux kernel, NetworkManager,
+privileged podlazd/supervisor and verified shipped Xray executable. It does
+not claim defense against arbitrary root/CAP_NET_ADMIN mutations or an
+unconfined compromised Xray deliberately exporting TUN FDs. Linux does not
+provide an atomic inherited-FD-to-NM-ifindex/namespace/generation check or
+universal close-time revocation of copied FDs. Before enabling the backend,
+a boot-scoped session nonce and monotonically fenced generation must bind
+persisted exact NM connection/namespace/link authority to a trusted,
+single-admission FD broker and a restricted per-generation process cohort.
+The supervisor must enforce and test prevention of FD escape, deny new
+admissions, terminate and independently verify quiescence of the entire
+previous cohort before admitting another generation. `pidfd`/cgroup
+termination and the originator's `close()` alone are not proof that a
+descriptor was never exported. Privileged FD checks before and after
+handoff are defense in depth, not atomic kernel ownership proof.
+Confinement must also address raw-socket/bypass behavior: a limited set
+of Linux capabilities alone is insufficient.
+
+The Privacy Envelope must already be durable and armed before NM FD
+admission, stay armed throughout crashes, restarts and failed transitions,
+and remain armed on uncertain ownership or incomplete quiescence. Only
+strictly verified identities authorize cleanup; ambiguous recovery reports
+Unknown, never Connected. The NM-owned path must pass real guest/desktop,
+all-profile, boot/crash, rollback and no-leak acceptance before becoming
+a user-facing opt-in. The configuration-only preparation in this stage
+neither creates an NM connection nor modifies the packaged Xray version.
+
 `systemd-resolved` and nftables verification are composition checks, not presence checks. Extra/foreign state inside a Podlaz-owned resource is ambiguous and fails closed rather than being normalized away.
 
 ## Network Session and Privacy Envelope
