@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -89,11 +90,13 @@ func TestNMOwnedTunConfigMarksVLESSWithoutChangingDefaultBackend(t *testing.T) {
 
 func TestNMOwnedTunConfigMarksEverySupportedTypedProtocol(t *testing.T) {
 	const uuid = "00000000-0000-0000-0000-000000000002"
+	vmess := base64.StdEncoding.EncodeToString([]byte(`{"v":"2","ps":"vmess","add":"example.com","port":"443","id":"` + uuid + `","aid":0,"scy":"auto","net":"tcp","tls":"none"}`))
 	for _, tc := range []struct {
 		name string
 		uri  string
 	}{
 		{"vless", "vless://" + uuid + "@example.com:443?security=none&type=tcp#vless"},
+		{"vmess", "vmess://" + vmess},
 		{"trojan", "trojan://example-password@example.com:443?security=tls&type=tcp#trojan"},
 		{"shadowsocks", "ss://aes-128-gcm:example-password@example.com:443#shadowsocks"},
 	} {
