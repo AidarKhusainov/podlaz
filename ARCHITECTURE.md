@@ -89,7 +89,12 @@ selection, new FD handoff, change in link/L3/DNS authority, or network mutation
 in this packaging stage. Installing and validating the newer binary does not
 establish generation fencing, FD escape confinement, safe admission, continuous
 Privacy Envelope, or desktop acceptance. Never treat this package stage as
-authorization to start Xray on an NM-owned TUN.
+authorization to start Xray on an NM-owned TUN. The pinned new Xray also
+rejects public-address VLESS without TLS/other encryption, which the legacy
+runtime accepts; this is an explicit profile-compatibility blocker for future
+NM adoption, not permission to change remote provider settings, falsify a
+private address, drop the profile class or silently fall back to another
+backend.
 
 `systemd-resolved` and nftables verification are composition checks, not presence checks. Extra/foreign state inside a Podlaz-owned resource is ambiguous and fails closed rather than being normalized away.
 

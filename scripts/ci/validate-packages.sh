@@ -118,7 +118,11 @@ run_native_packaged_xray_schema_test() {
   local xray="/tmp/podlaz-${arch}-packaged-${runtime_name}-schema-test"
   dpkg-deb --fsys-tarfile "${package}" | tar -xOf - "./usr/lib/podlaz/${runtime_name}" > "${xray}"
   chmod 0755 "${xray}"
-  PODLAZ_PACKAGED_XRAY_PATH="${xray}" go test ./internal/daemon -run '^TestPackagedXrayAcceptsPinnedTunConfigs$' -count=1
+  local test_name="TestPackagedXrayAcceptsPinnedTunConfigs"
+  if [ "${runtime_name}" = "xray-nm-owned" ]; then
+    test_name="TestPackagedNMOwnedXraySecurityBoundary"
+  fi
+  PODLAZ_PACKAGED_XRAY_PATH="${xray}" go test ./internal/daemon -run "^${test_name}$" -count=1
 }
 
 for package in "$@"; do
