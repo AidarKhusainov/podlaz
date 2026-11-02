@@ -53,6 +53,22 @@ type xrayTunInboundSettings struct {
 // around that link: route bypass, policy rules, DNS, nftables, rollback, and
 // recovery.
 func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte, error) {
+	return generateXrayTunConfig(p, opts, false)
+}
+
+// GenerateNMOwnedXrayTunConfig prepares an Xray packet data plane for a separately
+// supervised, NM-owned TUN. Every provider transport must carry the exact
+// protected underlay mark, including typed VLESS/REALITY. This function only
+// composes configuration: it does not activate NetworkManager, pass a TUN FD,
+// or relax the existing Xray-owned TUN lifecycle.
+func GenerateNMOwnedXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte, error) {
+	if opts.EgressMark == 0 {
+		return nil, errors.New("NM-owned TUN requires a non-zero Podlaz egress mark")
+	}
+	return generateXrayTunConfig(p, opts, true)
+}
+
+func generateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions, markVLESS bool) ([]byte, error) {
 	opts = normalizeXrayTunOptions(opts)
 	if profile.IsProviderXrayConfigProfile(p) {
 		return GenerateProviderXrayTunConfig(p, opts)
@@ -90,7 +106,7 @@ func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte
 				UserLevel: 0,
 			},
 		}},
-		Outbounds: []map[string]any{typedXrayTunOutbound(p, outboundAddress, outbound, opts.EgressMark)},
+		Outbounds: []map[string]any{typedXrayTunOutbound(p, outboundAddress, outbound, opts.EgressMark, markVLESS)},
 	}
 
 	out, err := json.MarshalIndent(cfg, "", "  ")
@@ -113,9 +129,18 @@ func normalizeXrayTunOptions(opts XrayTunConfigOptions) XrayTunConfigOptions {
 	return opts
 }
 
-func typedXrayTunOutbound(p profile.Profile, address string, outbound xrayOutbound, mark uint32) map[string]any {
+func typedXrayTunOutbound(p profile.Profile, address string, outbound xrayOutbound, mark uint32, markVLESS bool) map[string]any {
 	if strings.EqualFold(p.Protocol, "vless") {
-		return xrayTunOutboundConfig(p, address, outbound.StreamSettings)
+		if !markVLESS {
+			return xrayTunOutboundConfig(p, address, outbound.StreamSettings)
+		}
+		// Do not mutate the typed provider stream settings shared by the caller.
+		stream := make(map[string]any, len(outbound.StreamSettings)+1)
+		for key, value := range outbound.StreamSettings {
+			stream[key] = value
+		}
+		stream["sockopt"] = map[string]any{"mark": mark}
+		return xrayTunOutboundConfig(p, address, stream)
 	}
 	stream := make(map[string]any, len(outbound.StreamSettings)+1)
 	for key, value := range outbound.StreamSettings {
