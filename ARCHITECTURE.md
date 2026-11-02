@@ -91,6 +91,20 @@ default backend** and is not an NM session admission path. The expected
 identity must come from independent boot-scoped persisted authority, not
 observed netlink lookalikes. Kernel TUNGETIFF and netlink reads are not atomic,
 do not prove NM UUID or generation, and do not revoke duplicated descriptors.
+An additional read-only NM D-Bus active-connection verifier (not yet wired)
+compares the trusted UUID, device/active/settings object paths, TUN interface,
+MTU, managed and activated states, selected IPv4 default and IP4 configuration.
+It pins all property reads to one unique NM D-Bus owner and rejects daemon
+replacement mid-inspection. This is observation-only evidence; an active NM
+object is not itself durable session/cleanup authority and D-Bus property reads
+are not atomic. Its expected identities must come from a trusted prior
+session admission, not be selected by searching for lookalike NM connections.
+A private, uncalled read-only preflight combines kernel, active NM D-Bus,
+and repeated kernel identity observation, refusing intermediate drift. It
+must never trigger an FD handoff without durable generation fencing and
+independently enforced process/FD confinement and Privacy Envelope.
+Production still requires independent exact kernel authority checks,
+a persisted generation, privileged FD broker and restricted process cohort.
 Production still requires NM D-Bus ownership, durable generation fencing,
 enforceable confinement/FD escape prevention, supervisor quiescence and an
 already-armed Privacy Envelope before any inherited FD is admitted.
