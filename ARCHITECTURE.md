@@ -91,10 +91,33 @@ establish generation fencing, FD escape confinement, safe admission, continuous
 Privacy Envelope, or desktop acceptance. Never treat this package stage as
 authorization to start Xray on an NM-owned TUN. The pinned new Xray also
 rejects public-address VLESS without TLS/other encryption, which the legacy
-runtime accepts; this is an explicit profile-compatibility blocker for future
-NM adoption, not permission to change remote provider settings, falsify a
-private address, drop the profile class or silently fall back to another
-backend.
+runtime accepts. This is an upstream security policy, not a transient parser
+error.
+
+### Optional NetworkManager backend compatibility decision
+
+The NM-owned TUN backend uses **only an official, version-pinned Xray release**.
+Podlaz does not maintain an Xray fork or patch out upstream security checks.
+The current Xray-owned TUN backend remains the default and retains its existing
+supported profiles and pinned runtime. Opting into NM must be an explicit user
+choice; an unsupported profile never triggers a silent fallback to another
+backend, an automatic engine upgrade, or a change in provider semantics.
+
+NM-mode compatibility is determined by validating the **actual generated
+runtime config against the exact packaged official NM Xray binary**, for both
+typed profiles and schema-opaque native/grouped provider graphs. An NM
+incompatibility (including public-address VLESS without TLS or other accepted
+encryption) must fail with an actionable error **before any NM TUN creation,
+L3/DNS/route/firewall change, inherited-FD admission or child launch**. Do not
+infer provider compatibility solely from profile format, flatten native routing,
+falsify a private endpoint/gateway, weaken upstream checks or claim a profile
+is NM-compatible when the pinned runtime rejected its configuration.
+
+This is an approved *product constraint*, not evidence that a functional NM
+backend already exists. Production admission additionally requires exact
+NM-owned identity, per-generation FD/process confinement, a durable
+generation-fenced supervisor, an already armed Privacy Envelope, fault-safe
+rollback/recovery, and real guest/desktop connectivity and privacy acceptance.
 
 `systemd-resolved` and nftables verification are composition checks, not presence checks. Extra/foreign state inside a Podlaz-owned resource is ambiguous and fails closed rather than being normalized away.
 
