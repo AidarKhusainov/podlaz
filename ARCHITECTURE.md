@@ -110,6 +110,22 @@ kernel → NM → kernel read-only preflight. The durable state is a **deny fenc
 never FD admission permission: unknown, old-boot, malformed or still-reserved
 state blocks reuse. There is deliberately no cleanup/retire operation until a
 future confined supervisor proves old-generation cohort quiescence.
+A separately staged NM-owned TUN L3 adapter uses NetworkManager's
+in-memory, autoconnect-blocked connection settings to configure the native
+TUN link, IPv4 address, main-table default route, system DNS and IPv6-disabled
+policy. It persists exact boot/session/UUID intent **before** the first
+mutating NM D-Bus operation and records the exact returned settings/active
+object paths after each step. Failed or ambiguous operations retain this intent
+and the Privacy Envelope; missing paths, matching link names or vanished
+processes do not authorize cleanup. An independent read-only active-L3
+inspection rechecks the exact persisted session/intent, verifies the live
+Privacy Envelope both before and after inspection, pins D-Bus properties to
+one unique NM process owner, and compares TUN mode/owner, address, main
+default route and metric, DNS and IPv6 default routing against durable intent.
+NM active state or an observed default route alone never proves Internet FULL,
+FD generation admission, supervised Xray ownership, safe cleanup or privacy
+under process churn. This code is **not wired to connect** and
+does not admit an inherited FD or establish a protected Xray generation.
 Production still requires independent exact kernel authority checks,
 a persisted generation, privileged FD broker and restricted process cohort.
 Production still requires NM D-Bus ownership, durable generation fencing,
