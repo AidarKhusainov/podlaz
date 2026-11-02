@@ -62,6 +62,8 @@ func TestNMOwnedTunFDKernelIdentityRejectsDriftAndForeignLinks(t *testing.T) {
 		{"namespace-moved", func(v *nmTunFDKernelObservation) { v.Identity.NetNSInode++ }, true},
 		{"namespace-device-drift", func(v *nmTunFDKernelObservation) { v.Identity.NetNSDevice++ }, true},
 		{"TAP-not-TUN", func(v *nmTunFDKernelObservation) { v.Flags = unix.IFF_TAP }, true},
+		{"packet-info-header", func(v *nmTunFDKernelObservation) { v.Flags = unix.IFF_TUN }, true},
+		{"unsupported-extra-flags", func(v *nmTunFDKernelObservation) { v.Flags |= unix.IFF_VNET_HDR }, true},
 		{"multiqueue-not-supported", func(v *nmTunFDKernelObservation) { v.Flags |= unix.IFF_MULTI_QUEUE }, true},
 		{"link-administratively-down", func(v *nmTunFDKernelObservation) { v.LinkUp = false }, true},
 	}
