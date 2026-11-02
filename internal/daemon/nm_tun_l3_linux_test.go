@@ -198,6 +198,33 @@ func TestNML3RefusesNoPrivacyOrForeignLinkBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestNML3RefusesMissingLivePrivacyEnvelopeBeforeNMCall(t *testing.T) {
+	dir := t.TempDir()
+	session := protectedNMTestSession(t, dir)
+	stager := newNML3Stager(dir, fixedBootID("boot-a"))
+	barrierErr := errors.New("nftables privacy envelope is missing")
+	called := false
+	mutation := scriptedNML3Mutation{
+		add: func(context.Context, map[string]map[string]dbus.Variant) (dbus.ObjectPath, error) {
+			called = true
+			return "/", nil
+		},
+		activate: func(context.Context, dbus.ObjectPath) (dbus.ObjectPath, error) {
+			called = true
+			return "/", nil
+		},
+	}
+	_, err := stager.stageWith(context.Background(), session.SessionID, 101, testNML3Plan(), mutation,
+		func(string) error { return nil },
+		func(context.Context, networkSessionProtection) error { return barrierErr })
+	if !errors.Is(err, barrierErr) || called {
+		t.Fatalf("missing live protection must block all NM writes: err=%v, called=%v", err, called)
+	}
+	if _, err := os.Stat(stager.path()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed privacy proof persisted NM activation intent: %v", err)
+	}
+}
+
 func TestNML3RejectsInvalidPlanWithoutNMOrHostChanges(t *testing.T) {
 	plan := testNML3Plan()
 	for _, tc := range []struct {
