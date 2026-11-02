@@ -83,7 +83,9 @@ Xray owns creation/lifetime of the native `podlaz0` TUN link. The daemon may con
 
 A future opt-in NM-owned TUN FD broker has a Linux-only, read-only kernel
 identity preflight. It refuses non-TUN descriptors and mismatched expected
-interface name/index/MTU, current network namespace device/inode, and link
+interface name/index/MTU, actual TUN device namespace device/inode (via
+privileged TUNGETDEVNETNS, rejected if it differs from the broker namespace),
+and link
 administrative state before admission. This code is **not wired into the
 default backend** and is not an NM session admission path. The expected
 identity must come from independent boot-scoped persisted authority, not
