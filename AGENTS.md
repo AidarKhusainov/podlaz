@@ -61,6 +61,19 @@ These rules apply when drafting an Issue, implementation plan, or prompt for ano
 - If repeated changes leave the same blocker unresolved, reconsider assumptions, prior evidence, and alternatives before adding code. Preserve negative results rather than weakening acceptance or interpreting unrelated GREEN as a fix.
 - A blocker for one approach does not automatically block the task. Explore safe in-scope alternatives; otherwise report the evidence and precise prerequisite to proceed. Ask the owner when material requirements, semantics, safety, or compatibility cannot be reliably determined.
 
+## Task authoring and agent handoff
+
+These rules also apply when the deliverable is an Issue, plan, implementation assignment, or prompt for another agent; no code change is required merely to write one.
+
+- **Verify before assigning.** Identify the current repository/base, relevant Issue/PR status, canonical code/tests, existing coverage, prior attempts, and owner decisions. Resolve stale handoff claims against current evidence. Do not claim a root cause, implementation state, or CI result without support.
+- **Specify the outcome, not an assumed implementation.** State the user-observable problem, desired result, boundaries, dependencies, and why the work is needed. Separate proven facts from hypotheses and unresolved decisions. Do not turn a suggested solution into a requirement unless justified or explicitly approved.
+- **Define testable acceptance.** List concrete missing behaviors/invariants, positive and negative cases where relevant, required evidence (unit/integration/installed-runtime/security), supported environments, and an objective completion condition. Do not count unrelated existing GREEN, test names, or a successful PoC as acceptance.
+- **Control scope and sequencing.** Define in-scope/out-of-scope work, compatibility and security constraints, and prior failed approaches that must not be repeated without new evidence. Split large work only along independently meaningful validation or review boundaries; do not prescribe a stack of unused components as progress.
+- **Distinguish task types.** Label exploratory feasibility, diagnostic investigation, implementation, read-only audit, or integration/closure accurately. Research tasks need falsifiable hypotheses, decision criteria, and explicit stop/promotion conditions; implementation tasks require a plausible path to integrated acceptance.
+- **Make blockers actionable.** Identify decisions that belong to the owner and evidence still needed. When feasibility or semantics are unresolved, request a specific decision or assign a bounded investigation rather than demanding an unproven production outcome.
+- **Handoff only current facts.** Include links to authoritative issue/PR, exact relevant refs and evidence, known failures/negative findings, pending checks, and the next concrete action. Do not copy stale status summaries, duplicate repository policy, or imply merge/release authority.
+- **Review the assignment itself.** Before publishing, check that the scope is coherent, assumptions are labeled, acceptance is verifiable, constraints are compatible, and the executor can recognize success, disproval, and a genuine blocker. Revise ambiguous or contradictory requirements instead of passing them downstream.
+
 ## Development workflow
 
 1. Start from the requested base and work in the requested feature branch/worktree.
