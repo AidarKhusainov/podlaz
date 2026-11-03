@@ -21,6 +21,16 @@ import (
 type nmBrokerLease struct {
 	conn *net.UnixConn
 	once sync.Once
+	done chan struct{}
+}
+
+// Done closes if the dedicated broker process disconnects, even if the
+// caller never explicitly disconnected. It is not a VPN connectivity status.
+func (l *nmBrokerLease) Done() <-chan struct{} {
+	if l == nil {
+		return nil
+	}
+	return l.done
 }
 
 func (l *nmBrokerLease) Close() error {
@@ -96,10 +106,21 @@ func requestNMConfinedXrayGeneration(ctx context.Context, fd *os.File, request n
 		conn.Close()
 		return nil, err
 	}
-	lease := &nmBrokerLease{conn: conn}
+	lease := &nmBrokerLease{conn: conn, done: make(chan struct{})}
+	// Watch the broker's lifetime independently from caller cancellation. A
+	// sudden child crash must not leave the caller believing the lease lives.
 	go func() {
-		<-ctx.Done()
+		defer close(lease.done)
+		var unexpected [16]byte
+		_, _ = conn.Read(unexpected[:])
 		_ = lease.Close()
+	}()
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = lease.Close()
+		case <-lease.done:
+		}
 	}()
 	return lease, nil
 }
