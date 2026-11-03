@@ -23,8 +23,6 @@ jobs:
       CANDIDATE_COMMIT: ${{ github.sha }}
       PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
       PODLAZ_E2E_ACTIVE_RESTART_ROUNDS: '3'
-      E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-boot-replay-private
-      E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-boot-replay-public
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -60,13 +58,24 @@ jobs:
           PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: bash scripts/build-deb.sh
       - name: Prepare private guest workspace
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-boot-replay-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-boot-replay-public
         run: install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
       - name: Observe bounded restarts in one disposable guest
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-boot-replay-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-boot-replay-public
         run: bash scripts/e2e/hosted-vm-boot-authority.sh "${DEV_DEB}"
       - name: Validate public report
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-boot-replay-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-boot-replay-public
         if: always()
         run: bash scripts/e2e/hosted-vm-boot-authority.sh validate-report
       - name: Remove private VM state
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-boot-replay-private
         if: always()
         run: rm -rf "${E2E_TMP_ROOT}"
       - name: Upload public diagnostic evidence
