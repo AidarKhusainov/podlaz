@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -58,6 +59,10 @@ func RunNMOwnedRestrictedXrayChild(configPath string) error {
 	if !identity.DropCredentials || identity.UID <= 0 || identity.GID <= 0 {
 		return errors.New("NM Xray restricted child has no dedicated identity")
 	}
+	// prctl/capset are per-thread; the same OS thread must perform the
+	// entire privilege transition and the subsequent execve.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	if err := restrictNMOwnedXrayCapabilities(identity.UID, identity.GID); err != nil {
 		return fmt.Errorf("NM Xray capability isolation failed: %w", err)
 	}
