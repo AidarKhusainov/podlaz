@@ -127,7 +127,12 @@ persisted L3 intent, current read-only L3/Privacy Envelope verification and
 kernel/NM identity before making the one-shot generation reservation. It
 requires proof that the final unprivileged Xray UID/GID can read the generated config and traverse each parent directory **before** the generation reservation, repeats that proof before child privilege drop, and requires a pre-existing empty, delegated cgroup v2 and uses atomic
 clone-into-cgroup placement for the official NM Xray binary with the inherited
-TUN descriptor at FD 3 and a dedicated unprivileged identity. Its terminal
+TUN descriptor at FD 3 and a dedicated unprivileged identity. The broker
+consumes the admission descriptor and closes its copy as soon as child launch
+succeeds; retaining that original FD would invalidate a cgroup-only
+quiescence claim. The dedicated cgroup must be root-owned and not writable by
+other identities. Unexpected Xray exit is a connection failure, and waiting
+for child termination after a cgroup kill is bounded. Its terminal
 path kills the entire cgroup and checks its populated state; inability to
 establish quiescence retains the deny fence. This is not proof that a trusted
 process never transferred an FD outside its cgroup, nor does it grant safe
