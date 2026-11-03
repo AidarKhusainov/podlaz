@@ -70,6 +70,11 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 
 	snapshotOpts := netsnapshot.Options{Server: p.Server}
 	snapshot := m.collectTunResourceSnapshot(ctx, snapshotOpts)
+	// A known competing ~. owner must block before replacement preparation,
+	// recovery or Xray can alter any network resource.
+	if err := netexecutor.CheckDefaultDNSOwnershipSnapshot(snapshot.DNS, netsnapshot.DefaultTunName); err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("dns-ownership-preflight", "", "not-started", err)
+	}
 	allocationEvidence, err := m.collectTunAllocationEvidence(ctx, snapshot)
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
@@ -206,6 +211,12 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 		executor:   executor,
 		now:        time.Now,
 		preflightCore: func(preflightCtx context.Context) error {
+			// Fresh read-only observation before opening a transaction. The DNS
+			// executor will fence again immediately before host-network apply.
+			current := m.collectTunResourceSnapshot(preflightCtx, snapshotOpts)
+			if err := netexecutor.CheckDefaultDNSOwnershipSnapshot(current.DNS, plan.DNS.TargetLink); err != nil {
+				return err
+			}
 			return preflightTunRuntimeConfig(preflightCtx, xrayPath, preflightConfigPath, runtimePreflightConfig, coreIdentity)
 		},
 		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
