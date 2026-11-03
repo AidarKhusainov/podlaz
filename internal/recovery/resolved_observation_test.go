@@ -95,6 +95,12 @@ func TestResolvedRecoveryDoesNotRediscoverEmptyPostRevertRecord(t *testing.T) {
 	}
 }
 
+func TestObserveResolvedLinkPreservesSystemd255ManagedStatus(t *testing.T) {
+	if got := observeResolvedLink(context.Background(), CommandResult{Stdout: resolvedLinkExists().stdout}, nil); got != resolvedLinkPresent {
+		t.Fatalf("systemd 255 managed DNS link must remain present, got %v", got)
+	}
+}
+
 func TestObserveResolvedLinkAcceptsSystemd259DefaultRouteField(t *testing.T) {
 	result := CommandResult{Stdout: `Link 7 (podlaz0)
     Current Scopes: DNS
@@ -213,6 +219,7 @@ func TestObserveResolvedLinkFailsClosedForOperationalAndAmbiguousResults(t *test
 		{name: "unexpected exit code", ctx: context.Background(), result: CommandResult{RawStderr: "unexpected\n", Stderr: "unexpected", ExitCode: 2}, err: resolvedTestExitError{code: 2}},
 		{name: "malformed success", ctx: context.Background(), result: CommandResult{Stdout: "unexpected successful output"}},
 		{name: "duplicate target sections", ctx: context.Background(), result: CommandResult{Stdout: resolvedLinkExists().stdout + "\n" + resolvedLinkExists().stdout}},
+		{name: "wrong target link", ctx: context.Background(), result: CommandResult{Stdout: strings.Replace(resolvedLinkExists().stdout, "(podlaz0)", "(eth0)", 1)}},
 		{name: "concrete non-podlaz dns", ctx: context.Background(), result: CommandResult{Stdout: `Link 7 (podlaz0)
        DNS Servers: 203.0.113.53`}},
 	}
