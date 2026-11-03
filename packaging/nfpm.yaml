@@ -50,6 +50,10 @@ contents:
     dst: /usr/lib/systemd/system/podlazd.service
     file_info:
       mode: 0644
+  - src: __PACKAGE_ROOT__/usr/lib/systemd/system/podlaz-nm-fd-broker.service
+    dst: /usr/lib/systemd/system/podlaz-nm-fd-broker.service
+    file_info:
+      mode: 0644
   - src: __PACKAGE_ROOT__/usr/lib/sysusers.d/podlaz.conf
     dst: /usr/lib/sysusers.d/podlaz.conf
     file_info:

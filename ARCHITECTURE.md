@@ -122,15 +122,77 @@ inspection rechecks the exact persisted session/intent, verifies the live
 Privacy Envelope both before and after inspection, pins D-Bus properties to
 one unique NM process owner, and compares TUN mode/owner, address, main
 default route and metric, DNS and IPv6 default routing against durable intent.
+An intentionally opt-in, one-shot NM FD broker runs as
+`podlaz-nm-fd-broker.service`, packaged but **not enabled or started by
+default**. The existing `podlazd.service` and its restricted capabilities
+remain unchanged. The broker has an independent root-only `0700` runtime
+directory and `0600` Unix `SOCK_SEQPACKET` socket. It accepts exactly one
+request from a local root process authenticated using kernel `SO_PEERCRED`,
+with exactly one inherited TUN FD transferred by `SCM_RIGHTS`. The request
+carries exact persisted-session/NM/kernel authority, not a cleanup
+capability. An invalid request or excess/absent FD is refused and all
+received descriptors are closed. The caller closes its own FD immediately
+after transfer. A separate read-only lifetime lease detects unexpected
+broker disconnect; closing the lease cancels the supervised cohort.
+The broker request is versioned and includes the lowercase SHA-256 of the
+actual generated Xray config bytes that passed the official pre-mutation
+compatibility check. The receiver validates the exact root-owned file
+contents before generation reservation and again before FD handoff; the
+restricted child repeats that content check before dropping privileges and
+exec. A mismatch fails closed and preserves any already-reserved generation.
+The request digest is not evidence that a trusted caller ran preflight; the
+caller must use the separately bound `nmOwnedXrayPrepared` result and its
+`configSHA256` method.
+
+The response `spawned` means only that the restricted child was started;
+it is **not** connectivity, Internet FULL, or permission to expose traffic.
+
+The service's `Delegate=yes` permits management only under its assigned
+cgroup-v2 subtree. The broker allocates an isolated child cgroup, requires
+root ownership/non-writable-by-others permission and `cgroup.kill`
+write access, and atomically attaches Xray through `UseCgroupFD`. Before
+reserving the first generation it requires effective, permitted and
+bounding capabilities for TUN inspection, marked transport and privilege
+drop (`CAP_NET_ADMIN`, `CAP_NET_RAW`, `CAP_SETUID`,
+`CAP_SETGID`, `CAP_SETPCAP`). No default systemd service privileges are
+expanded. The restricted Xray child uses only `CAP_NET_RAW` and
+`NoNewPrivs` after UID/GID drop; the parent and child verify the final
+Xray user's config-read and ancestor-directory traversal permissions.
+The broker independently repeats exact durable NM L3/Privacy Envelope,
+D-Bus and kernel FD identity checks before admitting a one-shot
+generation. It closes its own TUN FD after spawning the child and
+requires bounded cohort termination and quiescence. Incomplete evidence
+keeps the durable generation reservation and Privacy Envelope armed.
+
+This service is a **broker transport and confinement increment**, not a
+working user-facing NM connect. No production connect path starts the
+separately scoped broker. The branch now contains the pinned unmodified
+official Xray runtime, typed/native NM config generator, and two-phase
+compatibility boundary incorporated from the previously separate #476/#477
+sources. In phase one, `prepareNMOwnedXray` generates the complete provider
+configuration and runs the exact official Xray preflight **before any
+Privacy Envelope, NM/L3/DNS, route or firewall mutation**. The result pins
+the interface, MTU, egress mark and SHA-256 of the tested bytes. Only after
+the caller explicitly arms the fail-closed Privacy Envelope may
+`stagePreparedNMOwnedXray` invoke protected NM L3 activation; changing
+any of the preflighted fields or configuration bytes fails before NM writes.
+Neither phase grants generation cleanup, NM connectivity or a user-visible
+mode. The broker's later FD checks cannot substitute for this initial
+pre-mutation compatibility gate.
+Even an empty cgroup is not proof that a descriptor never escaped by
+`SCM_RIGHTS`, `/proc/*/fd`, or another process; Linux lacks an atomic
+NM-ifindex/generation FD admission or general revoke-all-copies primitive
+for this single-queue TUN. No generation rollover, cleanup of NM/foreign
+network state, automatic recovery, or user NM backend activation is
+authorized without that proof and real disposable NM 1.46/1.54 natural
+global FULL, DNS, HTTPS, IPv4/IPv6 no-leak and fault acceptance.
+
 NM active state or an observed default route alone never proves Internet FULL,
 FD generation admission, supervised Xray ownership, safe cleanup or privacy
-under process churn. This code is **not wired to connect** and
-does not admit an inherited FD or establish a protected Xray generation.
-Production still requires independent exact kernel authority checks,
-a persisted generation, privileged FD broker and restricted process cohort.
-Production still requires NM D-Bus ownership, durable generation fencing,
-enforceable confinement/FD escape prevention, supervisor quiescence and an
-already-armed Privacy Envelope before any inherited FD is admitted.
+under process churn. The regular user Connect path remains independent of this private broker
+and does not activate NM. The standalone broker can admit a requested,
+pre-staged single protected generation, but has no completed production
+connect/disconnect orchestration or authority to retire it.
 
 `systemd-resolved` and nftables verification are composition checks, not presence checks. Extra/foreign state inside a Podlaz-owned resource is ambiguous and fails closed rather than being normalized away.
 
@@ -285,3 +347,5 @@ external archive is outside that guarantee and must be reviewed before sharing.
 Keep domain behavior below transport/composition boundaries. `internal/daemon/server.go` is the composition root: it wires collaborators and ordering but should delegate coherent setup/startup/HTTP/serve/shutdown phases to private helpers rather than accumulating domain logic.
 
 Behavioral changes require tests that express the invariant. Structural cleanup must preserve public CLI/API/state schema, package/service behavior, network ownership semantics, failure ordering, and recovery semantics unless a separate issue explicitly changes them.
+
+The optional NM backend exclusively uses the separately pinned **unmodified official** Xray release and validates the entire native/grouped generated configuration before any network mutation. Incompatible profiles may fail closed early with an explicit standard full-TUN alternative; provider fields are never rewritten, silently downgraded or flattened. These compatibility checks alone do not activate or approve an NM production backend. The existing default Xray-owned full-TUN behavior remains unchanged.

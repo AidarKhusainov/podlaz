@@ -129,7 +129,9 @@ bash scripts/package-runtime-helpers.sh "${root_dir}" "${arch}" "${goarch}"
 
 cat > "${root_dir}/usr/share/lintian/overrides/podlaz" <<'EOF'
 podlaz: statically-linked-binary usr/lib/podlaz/xray
+podlaz: statically-linked-binary usr/lib/podlaz/xray-nm-owned
 podlaz: unstripped-binary-or-object usr/lib/podlaz/xray
+podlaz: unstripped-binary-or-object usr/lib/podlaz/xray-nm-owned
 EOF
 chmod 0644 "${root_dir}/usr/share/lintian/overrides/podlaz"
 
@@ -145,6 +147,7 @@ ln -s _podlaz "${root_dir}/usr/share/zsh/vendor-completions/_plz"
 ln -s podlaz.fish "${root_dir}/usr/share/fish/vendor_completions.d/plz.fish"
 
 install -m 0644 packaging/systemd/podlazd.service "${root_dir}/usr/lib/systemd/system/podlazd.service"
+install -m 0644 packaging/systemd/podlaz-nm-fd-broker.service "${root_dir}/usr/lib/systemd/system/podlaz-nm-fd-broker.service"
 install -m 0644 packaging/sysusers.d/podlaz.conf "${root_dir}/usr/lib/sysusers.d/podlaz.conf"
 install -m 0644 packaging/polkit-1/actions/io.github.aidarkhusainov.podlaz.policy "${root_dir}/usr/share/polkit-1/actions/io.github.aidarkhusainov.podlaz.policy"
 generate_client_man_page "${root_dir}/usr/share/man/man1/podlaz.1.gz"
