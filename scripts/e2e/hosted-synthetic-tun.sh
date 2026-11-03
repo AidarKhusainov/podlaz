@@ -35,6 +35,7 @@ HOSTED_CONTROL_TIMEOUT_SECONDS="${PODLAZ_E2E_HOSTED_CONTROL_TIMEOUT_SECONDS:-180
 HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active terminal-clean}"
 HOSTED_EXPECT_CONNECT_FAILURE="${PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE:-false}"
 PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
+PODLAZ_E2E_GUEST_SUITE="${PODLAZ_E2E_GUEST_SUITE:-noble}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
 
 EVIDENCE_KEYS=(
@@ -54,6 +55,17 @@ EVIDENCE_KEYS=(
   outer.cleanup
   artifact.privacy
 )
+
+if [[ "${PODLAZ_E2E_GUEST_SUITE}" == resolute ]]; then
+  EVIDENCE_KEYS+=(
+    resolved.systemd259
+    resolved.default_route_field
+    resolved.active_status
+    resolved.active_recovery
+    resolved.inactive_status
+    resolved.reconnect
+  )
+fi
 
 if [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" == true ]]; then
   EVIDENCE_KEYS=(
@@ -378,7 +390,11 @@ teardown_all() {
 prepare_system_guest() {
   local policy_rc="${GUEST_ROOT}/usr/sbin/policy-rc.d" nm_tmp sudoers_tmp
   sudo -n rm -rf "${GUEST_ROOT}"
-  sudo -n debootstrap --variant=minbase noble "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
+  case "${PODLAZ_E2E_GUEST_SUITE}" in
+    noble|resolute) ;;
+    *) fail "unsupported synthetic guest suite" ;;
+  esac
+  sudo -n debootstrap --variant=minbase "${PODLAZ_E2E_GUEST_SUITE}" "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
   printf '#!/bin/sh\nexit 101\n' | sudo -n tee "${policy_rc}" >/dev/null
   sudo -n chmod 0755 "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update >"${PRIVATE_ROOT}/guest-apt.log" 2>&1
