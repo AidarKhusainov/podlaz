@@ -97,7 +97,7 @@ func (s nmConfinedXrayGeneration) Run(
 		return err
 	}
 
-	cmd := exec.Command(nmOwnedXrayExecutable, "run", "-config", configPath)
+	cmd := exec.Command("/usr/bin/podlazd", nmOwnedRestrictedLauncherArg, configPath)
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=/nonexistent", "XRAY_TUN_FD=3"}
 	cmd.ExtraFiles = []*os.File{fd}
 	cmd.Stdin = nil
@@ -106,9 +106,6 @@ func (s nmConfinedXrayGeneration) Run(
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true, Pdeathsig: syscall.SIGKILL,
 		UseCgroupFD: true, CgroupFD: int(cgroup.Fd()),
-		Credential: &syscall.Credential{
-			Uid: uint32(identity.UID), Gid: uint32(identity.GID), Groups: []uint32{},
-		},
 	}
 	// UseCgroupFD attaches atomically at clone; never Start-then-move PID.
 	if err := cmd.Start(); err != nil {
