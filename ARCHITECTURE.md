@@ -131,7 +131,12 @@ TUN descriptor at FD 3 and a dedicated unprivileged identity. The broker
 consumes the admission descriptor and closes its copy as soon as child launch
 succeeds; retaining that original FD would invalidate a cgroup-only
 quiescence claim. The dedicated cgroup must be root-owned and not writable by
-other identities. Unexpected Xray exit is a connection failure, and waiting
+other identities. Before reserving a generation, the broker must independently
+prove effective, permitted and bounding capabilities necessary for TUN
+inspection, marked Xray transport, privilege drop and bounding-set reduction
+(including CAP_NET_RAW and CAP_SETPCAP), and writable cgroup.kill authority.
+The default packaged daemon deliberately does not satisfy this contract;
+a separate opt-in delegated broker service is required. Unexpected Xray exit is a connection failure, and waiting
 for child termination after a cgroup kill is bounded. Its terminal
 path kills the entire cgroup and checks its populated state; inability to
 establish quiescence retains the deny fence. This is not proof that a trusted
