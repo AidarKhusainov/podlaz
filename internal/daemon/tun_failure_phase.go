@@ -35,21 +35,21 @@ func (e tunFailurePhaseError) Error() string {
 // rollback evidence. Incomplete cleanup must never be called rolled back.
 func dnsOwnershipConnectFailureMessage(ownership *netexecutor.DefaultDNSOwnershipError, rollbackStatus string) string {
 	var message strings.Builder
-	message.WriteString("Unable to connect.\\n\\n")
+	message.WriteString("Unable to connect.\n\n")
 	if ownership.Unknown {
-		message.WriteString("Podlaz could not verify who controls default DNS (~.).\\n")
+		message.WriteString("Podlaz could not verify who controls default DNS (~.).\n")
 	} else {
-		message.WriteString("Another VPN or network service controls default DNS (~.).\\n")
+		message.WriteString("Another VPN or network service controls default DNS (~.).\n")
 	}
 	switch rollbackStatus {
 	case "not-started":
-		message.WriteString("No new Podlaz VPN connection changes were applied.\\n")
+		message.WriteString("No new Podlaz VPN connection changes were applied.\n")
 	case "completed":
-		message.WriteString("The attempted Podlaz-owned network changes were rolled back.\\n")
+		message.WriteString("The attempted Podlaz-owned network changes were rolled back.\n")
 	default:
-		message.WriteString("Podlaz-owned network cleanup is incomplete; protection may remain armed.\\n")
+		message.WriteString("Podlaz-owned network cleanup is incomplete; protection may remain armed.\n")
 	}
-	message.WriteString("\\nRestore exclusive default DNS ownership before retrying.\\nRun:\\n  podlaz debug doctor --tun\\n  podlaz debug recover")
+	message.WriteString("\nRestore exclusive default DNS ownership before retrying.\nRun:\n  podlaz debug doctor --tun\n  podlaz debug recover")
 	return message.String()
 }
 
