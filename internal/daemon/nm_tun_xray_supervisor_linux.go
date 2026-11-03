@@ -40,6 +40,14 @@ func (s nmConfinedXrayGeneration) Run(
 	nm nmTunDBusAuthority, sessionID string, mark uint32,
 	configPath, cgroupPath string,
 ) error {
+	return s.runWithStart(ctx, fd, kernel, nm, sessionID, mark, configPath, cgroupPath, nil)
+}
+
+func (s nmConfinedXrayGeneration) runWithStart(
+	ctx context.Context, fd *os.File, kernel nmTunFDKernelIdentity,
+	nm nmTunDBusAuthority, sessionID string, mark uint32,
+	configPath, cgroupPath string, started func() error,
+) error {
 	if ctx == nil || fd == nil || fd.Fd() < 3 || ctx.Err() != nil {
 		return errors.New("NM Xray admission requires a live context and TUN descriptor")
 	}
@@ -142,6 +150,19 @@ func (s nmConfinedXrayGeneration) Run(
 		case <-time.After(5 * time.Second):
 		}
 		return fmt.Errorf("NM TUN broker FD release cannot be proven: %w", err)
+	}
+	// Report only that the restricted child was spawned, not that Xray has
+	// connected or NM reached FULL. Loss of the lifetime lease kills the
+	// entire cohort and leaves durable protection/reservation intact.
+	if started != nil {
+		if err := started(); err != nil {
+			_ = killNMGenerationCgroup(cgroup)
+			select {
+			case <-waited:
+			case <-time.After(5 * time.Second):
+			}
+			return errors.New("NM Xray broker launch notification failed; cohort remains fenced")
+		}
 	}
 	var processErr error
 	select {
