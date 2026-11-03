@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
@@ -67,6 +68,13 @@ func daemonAPIInternal(err error) error {
 }
 
 func daemonAPIHTTPStatusCode(err error) int {
+	var ownership *netexecutor.DefaultDNSOwnershipError
+	if errors.As(err, &ownership) {
+		if ownership.Unknown {
+			return http.StatusServiceUnavailable
+		}
+		return http.StatusConflict
+	}
 	if profile.IsValidationError(err) {
 		return http.StatusBadRequest
 	}
