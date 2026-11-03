@@ -27,10 +27,7 @@ func RunNMOwnedRestrictedXrayChild(configPath string) error {
 		os.Args[2] != configPath || os.Getenv("XRAY_TUN_FD") != "3" {
 		return errors.New("invalid NM Xray restricted child invocation")
 	}
-	fd, err := os.OpenFile("/proc/self/fd/3", os.O_RDWR, 0)
-	if err != nil {
-		return fmt.Errorf("NM Xray restricted FD unavailable: %w", err)
-	}
+	fd := os.NewFile(3, "inherited NM TUN")
 	defer fd.Close()
 	ifr, err := unix.NewIfreq("")
 	if err != nil {
