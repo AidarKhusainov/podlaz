@@ -145,7 +145,9 @@ func validateNMXrayBinaryAndConfig(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("official NM Xray binary unavailable: %w", err)
 	}
-	if !binary.Mode().IsRegular() || binary.Mode().Perm()&0o111 == 0 ||
+	binaryStat, ok := binary.Sys().(*syscall.Stat_t)
+	if !ok || binaryStat.Uid != 0 || binary.Mode().Perm()&0o6000 != 0 ||
+		!binary.Mode().IsRegular() || binary.Mode().Perm()&0o111 == 0 ||
 		binary.Mode().Perm()&0o022 != 0 {
 		return errors.New("official NM Xray binary has unsafe type or permissions")
 	}
@@ -153,7 +155,9 @@ func validateNMXrayBinaryAndConfig(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("NM Xray generated config unavailable: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Size() <= 0 ||
+	configStat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || configStat.Uid != 0 ||
+		!info.Mode().IsRegular() || info.Size() <= 0 ||
 		info.Mode().Perm()&0o007 != 0 || info.Mode().Perm()&0o022 != 0 {
 		return errors.New("NM Xray generated config has unsafe type or permissions")
 	}
