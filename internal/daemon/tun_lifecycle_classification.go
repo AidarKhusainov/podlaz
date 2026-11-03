@@ -32,6 +32,10 @@ func appendTunLifecycleFailureProbe(report tundiag.Report, phase string, cause e
 }
 
 func tunLifecycleFailureClassification(phase string, cause error) tundiag.Classification {
+	var ownership *netexecutor.DefaultDNSOwnershipError
+	if errors.As(cause, &ownership) && !ownership.Unknown {
+		return tundiag.ClassForeignDNSConflict
+	}
 	switch {
 	case errors.Is(cause, context.Canceled):
 		return tundiag.ClassCancelled
