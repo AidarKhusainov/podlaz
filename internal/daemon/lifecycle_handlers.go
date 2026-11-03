@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
@@ -82,7 +83,12 @@ func registerLifecycleHandlers(mux *http.ServeMux, lifecycle lifecycleService, a
 func logConnectFailure(req api.ConnectRequest, err error) {
 	phase, transactionID, rollbackStatus := tunFailureLogFields(err)
 	classification := "error"
-	switch {
+	var dnsOwnership *netexecutor.DefaultDNSOwnershipError
+	switch { 
+	case errors.As(err, &dnsOwnership) && dnsOwnership.Unknown:
+		classification = "dns-ownership-unavailable"
+	case errors.As(err, &dnsOwnership):
+		classification = "foreign-default-dns-conflict"
 	case isRuntimeUnavailableError(err):
 		classification = "runtime-unavailable"
 	case isTunHandoffBlocker(err):
