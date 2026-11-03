@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -97,8 +98,13 @@ func (s nmConfinedXrayGeneration) Run(
 		return err
 	}
 
+	kernelAuthority, err := json.Marshal(kernel)
+	if err != nil {
+		return fmt.Errorf("encode exact NM Xray FD authority: %w", err)
+	}
 	cmd := exec.Command("/usr/bin/podlazd", nmOwnedRestrictedLauncherArg, configPath)
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=/nonexistent", "XRAY_TUN_FD=3"}
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=/nonexistent", "XRAY_TUN_FD=3",
+		"PODLAZ_NM_KERNEL_IDENTITY=" + string(kernelAuthority)}
 	cmd.ExtraFiles = []*os.File{fd}
 	cmd.Stdin = nil
 	cmd.Stdout = io.Discard
