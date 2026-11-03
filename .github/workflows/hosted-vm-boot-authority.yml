@@ -3,6 +3,8 @@ name: Hosted VM Boot Authority
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [diagnostics/boot-replay-bounded-cycles]
   workflow_dispatch:
     inputs:
       restart_cycles:
@@ -21,14 +23,15 @@ concurrency:
 jobs:
   qualify:
     name: Real boot autostart and same-boot authority
+    if: ${{ github.event_name != 'push' || github.event.head_commit.message == 'test(e2e): run bounded DNS restart evidence' }}
     runs-on: ubuntu-24.04
     # Multi-cycle diagnostics have a hard spend ceiling, not a relaxed
     # acceptance deadline. A cancelled/timed-out experiment is inconclusive.
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.restart_cycles != '1' && 30 || 150 }}
+    timeout-minutes: ${{ github.event_name == 'push' && 30 || (github.event_name == 'workflow_dispatch' && inputs.restart_cycles != '1' && 30 || 150) }}
     env:
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
       CANDIDATE_COMMIT: ${{ github.sha }}
-      PODLAZ_E2E_BOOT_RESTART_CYCLES: ${{ github.event_name == 'workflow_dispatch' && inputs.restart_cycles || '1' }}
+      PODLAZ_E2E_BOOT_RESTART_CYCLES: ${{ github.event_name == 'push' && '3' || (github.event_name == 'workflow_dispatch' && inputs.restart_cycles || '1') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

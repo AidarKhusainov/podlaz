@@ -8,6 +8,11 @@ on:
   pull_request:
     paths:
       - '.github/workflows/release.yml'
+      - '.github/workflows/ci.yml'
+      - 'go.mod'
+      - 'scripts/build-deb.sh'
+      - 'scripts/ci/require-patched-go.sh'
+      - 'scripts/ci/create-release-artifacts.sh'
   workflow_dispatch:
     inputs:
       tag:
