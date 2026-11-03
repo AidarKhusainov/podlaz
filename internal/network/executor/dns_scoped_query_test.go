@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -121,4 +122,60 @@ func TestResolvedScopedQueryFailureCausesAreBounded(t *testing.T) {
 	if got := ResolvedScopedQueryFailureCause(errors.New("private 192.0.2.33")); got != "" {
 		t.Fatalf("untyped error produced public DNS failure class %q", got)
 	}
+}
+
+func TestResolvedScopedQueryDistinguishesCommandDeadlineFromFailure(t *testing.T) {
+	tests := []struct {
+		name  string
+		err   error
+		cause string
+	}{
+		{
+			name: "inner-command-deadline-with-killed-process",
+			err: commandError{
+				name:       "resolvectl",
+				err:        errors.New("signal: killed"),
+				contextErr: context.DeadlineExceeded,
+			},
+			cause: ResolvedScopedCauseCommandTimeout,
+		},
+		{
+			name: "cancelled-command-is-not-timeout",
+			err: commandError{
+				name:       "resolvectl",
+				err:        errors.New("signal: killed"),
+				contextErr: context.Canceled,
+			},
+			cause: ResolvedScopedCauseCommandFailure,
+		},
+		{
+			name:  "ordinary-command-failure",
+			err:   errors.New("exit status 1"),
+			cause: ResolvedScopedCauseCommandFailure,
+		},
+		{
+			name:  "unavailable-command",
+			err:   &exec.Error{Name: "resolvectl", Err: exec.ErrNotFound},
+			cause: ResolvedScopedCauseCommandUnavailable,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := (ResolvedScopedQueryVerifier{
+				Runner: scopedCommandFailureRunner{err: tc.err},
+			}).Query(context.Background(), "podlaz0", 7, "example.com")
+			if !errors.Is(err, ErrResolvedLinkQueryFailure) {
+				t.Fatalf("scoped DNS failure lost classification: %v", err)
+			}
+			if got := ResolvedScopedQueryFailureCause(err); got != tc.cause {
+				t.Fatalf("scoped DNS cause=%q, want %q", got, tc.cause)
+			}
+		})
+	}
+}
+
+type scopedCommandFailureRunner struct{ err error }
+
+func (r scopedCommandFailureRunner) Run(context.Context, string, ...string) (CommandResult, error) {
+	return CommandResult{ExitCode: -1}, r.err
 }

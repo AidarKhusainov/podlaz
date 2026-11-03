@@ -72,6 +72,24 @@ func resolvedScopedQueryFailure(cause string, err error) error {
 	return resolvedScopedQueryCauseError{cause: cause, err: err}
 }
 
+// observeCommand applies its own command deadline (5s), independently of the
+// caller's connectivity probe deadline. commandError.Unwrap exposes the
+// subprocess error, not its contextErr; inspect that bounded evidence without
+// changing error semantics for other command consumers.
+func resolvedScopedCommandTimedOut(err error) bool {
+	for err != nil {
+		var commandFailure commandError
+		if !errors.As(err, &commandFailure) {
+			return false
+		}
+		if errors.Is(commandFailure.contextErr, context.DeadlineExceeded) {
+			return true
+		}
+		err = commandFailure.err
+	}
+	return false
+}
+
 // ResolvedScopedQueryVerifier performs one uncached IPv4 lookup bound to the
 // exact systemd-resolved link. It accepts an answer only when resolvectl
 // identifies the expected link in the result itself.
@@ -97,7 +115,7 @@ func (e ResolvedScopedQueryVerifier) Query(ctx context.Context, link string, lin
 		cause := ResolvedScopedCauseCommandFailure
 		var unavailable *exec.Error
 		switch {
-		case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
+		case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded), resolvedScopedCommandTimedOut(err):
 			cause = ResolvedScopedCauseCommandTimeout
 		case errors.As(err, &unavailable):
 			cause = ResolvedScopedCauseCommandUnavailable
