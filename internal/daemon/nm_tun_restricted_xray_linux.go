@@ -59,6 +59,9 @@ func RunNMOwnedRestrictedXrayChild(configPath string) error {
 	if !identity.DropCredentials || identity.UID <= 0 || identity.GID <= 0 {
 		return errors.New("NM Xray restricted child has no dedicated identity")
 	}
+	if err := verifyNMXrayConfigChildAccess(configPath, identity.UID, identity.GID); err != nil {
+		return errors.New("NM Xray restricted child cannot access generated config")
+	}
 	// prctl/capset are per-thread; the same OS thread must perform the
 	// entire privilege transition and the subsequent execve.
 	runtime.LockOSThread()
