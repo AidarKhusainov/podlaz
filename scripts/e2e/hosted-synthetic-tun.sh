@@ -1222,6 +1222,23 @@ run_clean_recovery() {
   guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/recovery_json.sh && assert_clean_recovery_json_file '${GUEST_PRIVATE}/recover.json'"
 }
 
+assert_opt_in_nm_fd_broker() {
+  # This is an installed-package service boundary check inside the disposable
+  # NetworkManager guest, never on the hosted runner's real network namespace.
+  # Broker remains unstarted by default and has no user-facing Connect path.
+  guest_exec /bin/bash -lc 'test "$(systemctl is-enabled podlaz-nm-fd-broker.service)" = static'
+  guest_exec /bin/bash -lc '! systemctl is-active --quiet podlaz-nm-fd-broker.service'
+  guest_exec systemctl start podlaz-nm-fd-broker.service
+  guest_exec systemctl is-active --quiet podlaz-nm-fd-broker.service
+  guest_exec test -S /run/podlaz-nm-fd/broker.sock
+  guest_exec runuser -u e2e -- python3 /workspace/scripts/e2e/nm_fd_broker_guest_smoke.py
+  guest_exec test ! -e /run/podlaz/nm-owned-generation.json
+  guest_exec systemctl stop podlaz-nm-fd-broker.service
+  guest_exec /bin/bash -lc 'test ! -S /run/podlaz-nm-fd/broker.sock'
+  guest_exec systemctl is-active --quiet podlazd.service
+  printf 'nm-broker-optin-smoke=pass\n'
+}
+
 run_scenario() {
   local import_code connect_code
   mark_failure infrastructure outer.baseline
@@ -1233,6 +1250,7 @@ run_scenario() {
   mark_failure product candidate.provenance
   install_candidate_in_guest
   assert_guest_package_provenance
+  assert_opt_in_nm_fd_broker
   record_evidence candidate.provenance pass
 
   guest_exec install -d -o e2e -g e2e -m 0700 "${GUEST_XDG}" "${GUEST_XDG}/config" "${GUEST_XDG}/state" "${GUEST_XDG}/cache" "${GUEST_PRIVATE}"
