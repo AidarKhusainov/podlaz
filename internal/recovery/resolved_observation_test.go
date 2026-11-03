@@ -169,6 +169,27 @@ Current DNS Server: 192.0.2.53
 			}
 		})
 	}
+	}
+
+	for _, tt := range []struct {
+		name      string
+		protocols string
+	}{
+		{name: "missing protocol polarity", protocols: "-LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported"},
+		{name: "conflicting protocol polarity", protocols: "+DefaultRoute -DefaultRoute -LLMNR -mDNS"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			output := strings.Replace(
+				fmt.Sprintf(base, "     Default Route: yes"),
+				"+DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported",
+				tt.protocols,
+				1,
+			)
+			if got := observeResolvedLink(context.Background(), CommandResult{Stdout: output}, nil); got != resolvedLinkUnknown {
+				t.Fatalf("ambiguous Protocols polarity must fail closed, got %v", got)
+			}
+		})
+	}
 }
 
 func TestObserveResolvedLinkFailsClosedForOperationalAndAmbiguousResults(t *testing.T) {
