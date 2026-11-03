@@ -5,6 +5,8 @@ package daemon
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
+	"hash"
 	"errors"
 	"fmt"
 
@@ -63,7 +65,7 @@ func prepareNMOwnedXrayWith(
 	}
 	config := append([]byte(nil), generated...)
 	return &nmOwnedXrayPrepared{
-		config: config, digest: sha256.Sum256(config),
+		config: config, digest: nmXrayAuthorityDigest(config, opts.Name, opts.MTU, opts.EgressMark),
 		interfaceName: opts.Name, mtu: opts.MTU, mark: opts.EgressMark,
 	}, nil
 }
@@ -86,7 +88,7 @@ func stagePreparedNMOwnedXrayWith(
 		!networkSessionIDPattern.MatchString(sessionID) ||
 		proof.interfaceName != plan.Interface || proof.mtu != int(plan.MTU) ||
 		proof.mark == 0 || len(proof.config) == 0 ||
-		sha256.Sum256(proof.config) != proof.digest {
+		nmXrayAuthorityDigest(proof.config, proof.interfaceName, proof.mtu, proof.mark) != proof.digest {
 		return nil, nmL3Intent{}, errors.New("NM Xray preflight proof changed or has inconsistent L3 authority")
 	}
 	if err := ctx.Err(); err != nil {
@@ -100,4 +102,29 @@ func stagePreparedNMOwnedXrayWith(
 		return nil, intent, err
 	}
 	return append([]byte(nil), proof.config...), intent, nil
+}
+
+// nmXrayAuthorityDigest seals the *tested* exact config together with
+// generation admission choices. A mutated mark is otherwise invisible to a
+// digest of JSON alone and can divert marked outbound transport.
+// Length-delimited fields and fixed-width integers avoid ambiguous encoding.
+func nmXrayAuthorityDigest(config []byte, name string, mtu int, mark uint32) [32]byte {
+	h := sha256.New()
+	var encoded [8]byte
+	binary.BigEndian.PutUint32(encoded[:4], uint32(len(name)))
+	_, _ = h.Write(encoded[:4])
+	_, _ = h.Write([]byte(name))
+	binary.BigEndian.PutUint32(encoded[:4], uint32(mtu))
+	binary.BigEndian.PutUint32(encoded[4:], mark)
+	_, _ = h.Write(encoded[:])
+	binary.BigEndian.PutUint32(encoded[:4], uint32(len(config)))
+	_, _ = h.Write(encoded[:4])
+	_, _ = h.Write(config)
+	return nmXrayDigestSum(h)
+}
+
+func nmXrayDigestSum(h hash.Hash) [32]byte {
+	var result [32]byte
+	copy(result[:], h.Sum(nil))
+	return result
 }
