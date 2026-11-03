@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -66,6 +67,13 @@ func RunNMOwnedFDBroker(ctx context.Context) error {
 	}
 	defer peer.Close()
 	_ = listener.Close()
+	go func() {
+		<-ctx.Done()
+		_ = peer.Close()
+	}()
+	if err := peer.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
 	if err := verifyNMBrokerPeer(peer); err != nil {
 		return err
 	}
@@ -74,6 +82,9 @@ func RunNMOwnedFDBroker(ctx context.Context) error {
 		return err
 	}
 	defer fd.Close()
+	if err := peer.SetReadDeadline(time.Time{}); err != nil {
+		return err
+	}
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
