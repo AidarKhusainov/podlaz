@@ -18,7 +18,7 @@ func TestNMConfinedXrayRejectsAdmissionBeforeGenerationMutation(t *testing.T) {
 	}
 	t.Run("missing FD", func(t *testing.T) {
 		err := s.Run(context.Background(), nil, nmTunFDKernelIdentity{},
-			nmTunDBusAuthority{}, "", 0, "", "")
+			nmTunDBusAuthority{}, "", 0, "", "", "")
 		if err == nil || !strings.Contains(err.Error(), "descriptor") {
 			t.Fatalf("expected missing FD refusal, got %v", err)
 		}
@@ -30,7 +30,7 @@ func TestNMConfinedXrayRejectsAdmissionBeforeGenerationMutation(t *testing.T) {
 		}
 		defer fd.Close()
 		if err := s.Run(nil, fd, nmTunFDKernelIdentity{},
-			nmTunDBusAuthority{}, "", 0, "", ""); err == nil {
+			nmTunDBusAuthority{}, "", 0, "", "", ""); err == nil {
 			t.Fatal("missing context admitted")
 		}
 	})

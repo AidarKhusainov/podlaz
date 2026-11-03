@@ -26,7 +26,7 @@ func sendNMBrokerTestMessage(t *testing.T, additionalFDs int) (*net.UnixConn, *n
 	}
 	req := nmBrokerGenerationRequest{
 		Schema: nmBrokerRequestSchema, SessionID: "00112233445566778899aabbccddeeff",
-		EgressMark: 101, ConfigPath: "/run/podlaz/generated/xray.json",
+		EgressMark: 101, ConfigPath: "/run/podlaz/generated/xray.json", ConfigSHA256: nmBrokerTestDigest,
 		Kernel: testNMFDIdentity(), NM: validExpectedNMTun(),
 	}
 	payload, err := json.Marshal(req)

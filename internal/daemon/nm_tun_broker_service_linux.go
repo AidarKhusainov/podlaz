@@ -105,7 +105,8 @@ func RunNMOwnedFDBroker(ctx context.Context) error {
 		generation: newNMGenerationFence("/run/podlaz", nil),
 	}
 	return supervisor.runWithStart(childCtx, fd, request.Kernel, request.NM,
-		request.SessionID, request.EgressMark, request.ConfigPath, cgroup, func() error {
+		request.SessionID, request.EgressMark, request.ConfigPath, cgroup,
+		request.ConfigSHA256, func() error {
 			_, err := peer.Write([]byte("spawned"))
 			return err
 		})

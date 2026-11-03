@@ -38,15 +38,15 @@ type nmConfinedXrayGeneration struct {
 func (s nmConfinedXrayGeneration) Run(
 	ctx context.Context, fd *os.File, kernel nmTunFDKernelIdentity,
 	nm nmTunDBusAuthority, sessionID string, mark uint32,
-	configPath, cgroupPath string,
+	configPath, cgroupPath, configSHA256 string,
 ) error {
-	return s.runWithStart(ctx, fd, kernel, nm, sessionID, mark, configPath, cgroupPath, nil)
+	return s.runWithStart(ctx, fd, kernel, nm, sessionID, mark, configPath, cgroupPath, configSHA256, nil)
 }
 
 func (s nmConfinedXrayGeneration) runWithStart(
 	ctx context.Context, fd *os.File, kernel nmTunFDKernelIdentity,
 	nm nmTunDBusAuthority, sessionID string, mark uint32,
-	configPath, cgroupPath string, started func() error,
+	configPath, cgroupPath, configSHA256 string, started func() error,
 ) error {
 	if ctx == nil || fd == nil || fd.Fd() < 3 || ctx.Err() != nil {
 		return errors.New("NM Xray admission requires a live context and TUN descriptor")
@@ -64,6 +64,9 @@ func (s nmConfinedXrayGeneration) runWithStart(
 		return err
 	}
 	if err := validateNMXrayBinaryAndConfig(configPath); err != nil {
+		return err
+	}
+	if err := verifyNMXrayConfigContent(configPath, configSHA256); err != nil {
 		return err
 	}
 	cgroup, err := openNMGenerationCgroup(cgroupPath)
@@ -112,6 +115,9 @@ func (s nmConfinedXrayGeneration) runWithStart(
 	if err := s.l3.verifyActiveL3(ctx); err != nil {
 		return fmt.Errorf("NM Xray L3 changed after reservation: %w", err)
 	}
+	if err := verifyNMXrayConfigContent(configPath, configSHA256); err != nil {
+		return fmt.Errorf("NM Xray configuration changed after reservation: %w", err)
+	}
 	if err := verifyNMOwnedTunReadOnlyPreflight(ctx, int(fd.Fd()), kernel, nm); err != nil {
 		return fmt.Errorf("NM Xray FD changed before handoff: %w", err)
 	}
@@ -125,7 +131,8 @@ func (s nmConfinedXrayGeneration) runWithStart(
 	}
 	cmd := exec.Command("/usr/bin/podlazd", nmOwnedRestrictedLauncherArg, configPath)
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=/nonexistent", "XRAY_TUN_FD=3",
-		"PODLAZ_NM_KERNEL_IDENTITY=" + string(kernelAuthority)}
+		"PODLAZ_NM_KERNEL_IDENTITY=" + string(kernelAuthority),
+		"PODLAZ_NM_CONFIG_SHA256=" + configSHA256}
 	cmd.ExtraFiles = []*os.File{fd}
 	cmd.Stdin = nil
 	cmd.Stdout = io.Discard

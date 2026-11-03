@@ -5,6 +5,7 @@ package daemon
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -122,4 +123,12 @@ func nmXrayAuthorityDigest(config []byte, name string, mtu int, mark uint32) [32
 	var result [32]byte
 	copy(result[:], h.Sum(nil))
 	return result
+}
+
+func (p *nmOwnedXrayPrepared) configSHA256() string {
+	if p == nil || nmXrayAuthorityDigest(p.config, p.interfaceName, p.mtu, p.mark) != p.digest {
+		return ""
+	}
+	sum := sha256.Sum256(p.config)
+	return hex.EncodeToString(sum[:])
 }

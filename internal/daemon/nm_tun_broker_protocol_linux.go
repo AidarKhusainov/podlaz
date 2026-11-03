@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	nmBrokerRequestSchema   = "podlaz.nm-tun-broker-request.v1"
+	nmBrokerRequestSchema   = "podlaz.nm-tun-broker-request.v2"
 	nmBrokerRequestMaxBytes = 4096
 	nmBrokerSocket          = "/run/podlaz-nm-fd/broker.sock"
 )
@@ -26,6 +26,7 @@ type nmBrokerGenerationRequest struct {
 	SessionID  string                `json:"session_id"`
 	EgressMark uint32                `json:"egress_mark"`
 	ConfigPath string                `json:"config_path"`
+	ConfigSHA256 string             `json:"config_sha256"`
 	Kernel     nmTunFDKernelIdentity `json:"kernel"`
 	NM         nmTunDBusAuthority    `json:"network_manager"`
 }
@@ -45,7 +46,8 @@ func decodeNMBrokerGenerationRequest(data []byte) (nmBrokerGenerationRequest, er
 		return nmBrokerGenerationRequest{}, errors.New("trailing NM broker message data")
 	}
 	if request.Schema != nmBrokerRequestSchema || !networkSessionIDPattern.MatchString(request.SessionID) ||
-		request.EgressMark == 0 || len(request.ConfigPath) > 512 ||
+		request.EgressMark == 0 || !validNMXrayConfigDigest(request.ConfigSHA256) ||
+		len(request.ConfigPath) > 512 ||
 		!filepath.IsAbs(request.ConfigPath) || filepath.Clean(request.ConfigPath) != request.ConfigPath ||
 		!strings.HasPrefix(request.ConfigPath, "/run/podlaz/") ||
 		request.Kernel.Name == "" || request.Kernel.Index <= 0 || request.Kernel.MTU <= 0 ||

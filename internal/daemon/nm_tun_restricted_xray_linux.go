@@ -52,6 +52,9 @@ func RunNMOwnedRestrictedXrayChild(configPath string) error {
 	if err := validateNMXrayBinaryAndConfig(configPath); err != nil {
 		return err
 	}
+	if err := verifyNMXrayConfigContent(configPath, os.Getenv("PODLAZ_NM_CONFIG_SHA256")); err != nil {
+		return errors.New("NM Xray restricted child configuration differs from official preflight")
+	}
 	identity, err := dedicatedProxyCoreExecutionIdentity()
 	if err != nil {
 		return err

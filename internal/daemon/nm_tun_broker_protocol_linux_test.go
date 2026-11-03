@@ -9,12 +9,15 @@ import (
 	"testing"
 )
 
+const nmBrokerTestDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 func TestNMBrokerRequestFailsClosedForMissingOrAmbiguousAuthority(t *testing.T) {
 	valid := nmBrokerGenerationRequest{
 		Schema:     nmBrokerRequestSchema,
 		SessionID:  "00112233445566778899aabbccddeeff",
 		EgressMark: 101,
 		ConfigPath: "/run/podlaz/generated/xray.json",
+		ConfigSHA256: nmBrokerTestDigest,
 		Kernel:     testNMFDIdentity(),
 		NM:         validExpectedNMTun(),
 	}
@@ -37,6 +40,8 @@ func TestNMBrokerRequestFailsClosedForMissingOrAmbiguousAuthority(t *testing.T) 
 		{"NM UUID", func(r *nmBrokerGenerationRequest) { r.NM.UUID = "" }},
 		{"identity mismatch", func(r *nmBrokerGenerationRequest) { r.NM.Name = "foreign0" }},
 		{"config relative", func(r *nmBrokerGenerationRequest) { r.ConfigPath = "xray.json" }},
+		{"missing config digest", func(r *nmBrokerGenerationRequest) { r.ConfigSHA256 = "" }},
+		{"invalid config digest", func(r *nmBrokerGenerationRequest) { r.ConfigSHA256 = "abcd" }},
 		{"config traversal", func(r *nmBrokerGenerationRequest) { r.ConfigPath = "/run/../etc/xray.json" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
