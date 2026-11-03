@@ -70,10 +70,13 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 
 	snapshotOpts := netsnapshot.Options{Server: p.Server}
 	snapshot := m.collectTunResourceSnapshot(ctx, snapshotOpts)
-	// A known competing ~. owner must block before replacement preparation,
-	// recovery or Xray can alter any network resource.
-	if err := netexecutor.CheckDefaultDNSOwnershipSnapshot(snapshot.DNS, netsnapshot.DefaultTunName); err != nil {
-		return api.LifecycleResponse{}, withTunFailurePhase("dns-ownership-preflight", "", "not-started", err)
+	// A proven competing ~. owner blocks immediately. Missing/unsupported
+	// resolved remains subject to the existing, more specific DNS planner
+	// preflight, which also refuses mutation before active handoff.
+	if snapshot.DNS.Resolved.Status == netsnapshot.StatusDetected {
+		if err := netexecutor.CheckDefaultDNSOwnershipSnapshot(snapshot.DNS, netsnapshot.DefaultTunName); err != nil {
+			return api.LifecycleResponse{}, withTunFailurePhase("dns-ownership-preflight", "", "not-started", err)
+		}
 	}
 	allocationEvidence, err := m.collectTunAllocationEvidence(ctx, snapshot)
 	if err != nil {
@@ -170,6 +173,11 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 	m.mu.Unlock()
 
 	snapshot = m.collectTunResourceSnapshot(ctx, snapshotOpts)
+	// The previously clean observation cannot authorize a recovery mutation
+	// after ownership has changed in the meantime.
+	if err := netexecutor.CheckDefaultDNSOwnershipSnapshot(snapshot.DNS, netsnapshot.DefaultTunName); err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("dns-ownership-preflight", "", "not-started", err)
+	}
 	snapshot, err = m.autoRecoverTunOwnedState(ctx, snapshot, req.Handoff, snapshotOpts)
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("recovery", "", "not-started", err)
