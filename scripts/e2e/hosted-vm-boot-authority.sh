@@ -292,6 +292,14 @@ if [[ "${restart_count}" =~ ^[0-9]{1,6}$ ]]; then
 else
   printf 'boot-restart-diagnostic.restart_count=unknown\n'
 fi
+# Preserve provenance of the *first* replay failure: read only its private,
+# strict, same-boot diagnostic, never re-query DNS or publish original output.
+scope_cause="$(timeout 3 python3 /var/tmp/podlaz-hosted-vm-daemon-status-semantics.py diagnose-dns-scope-cause /run/podlaz/diagnostics/network-session-resume.json 2>/dev/null || printf unknown)"
+case "${scope_cause}" in
+  invalid-input|command-timeout|command-unavailable|command-failure|output-too-large|unexpected-stderr|link-not-matched|no-ipv4|identity-changed|unknown) ;;
+  *) scope_cause=unknown ;;
+esac
+printf 'boot-restart-diagnostic.dns_scope_cause=%s\n' "${scope_cause}"
 EOF_DIAGNOSTIC
   then
     printf 'boot-restart-diagnostic.guest-control=unavailable\n' >&2
