@@ -47,7 +47,10 @@ func (l *nmBrokerLease) Close() error {
 // exact protected NM L3 intent and the pinned official Xray config in advance.
 // The broker repeats identity/envelope/generation checks independently.
 // It consumes fd on every outcome; no copied packet FD stays with the caller.
-func requestNMConfinedXrayGeneration(ctx context.Context, fd *os.File, request nmBrokerGenerationRequest) (*nmBrokerLease, error) {
+func requestNMConfinedXrayGeneration(
+	ctx context.Context, fd *os.File, request nmBrokerGenerationRequest,
+	prepared *nmOwnedXrayPrepared,
+) (*nmBrokerLease, error) {
 	if fd == nil {
 		return nil, errors.New("NM broker requires a TUN descriptor")
 	}
@@ -55,7 +58,11 @@ func requestNMConfinedXrayGeneration(ctx context.Context, fd *os.File, request n
 	if ctx == nil || ctx.Err() != nil || fd.Fd() < 3 {
 		return nil, errors.New("NM broker call has no live context or descriptor")
 	}
-	payload, err := json.Marshal(request)
+	boundRequest, err := bindNMPreparedBrokerRequest(request, prepared)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(boundRequest)
 	if err != nil {
 		return nil, errors.New("NM broker request encoding failed")
 	}
@@ -123,4 +130,22 @@ func requestNMConfinedXrayGeneration(ctx context.Context, fd *os.File, request n
 		}
 	}()
 	return lease, nil
+}
+
+func bindNMPreparedBrokerRequest(
+	request nmBrokerGenerationRequest, prepared *nmOwnedXrayPrepared,
+) (nmBrokerGenerationRequest, error) {
+	if prepared == nil || prepared.mark == 0 ||
+		prepared.interfaceName != request.Kernel.Name ||
+		prepared.mtu != request.Kernel.MTU ||
+		prepared.mark != request.EgressMark {
+		return nmBrokerGenerationRequest{}, errors.New("NM FD broker requires exact official Xray preflight proof")
+	}
+	digest := prepared.configSHA256()
+	if !validNMXrayConfigDigest(digest) ||
+		(request.ConfigSHA256 != "" && request.ConfigSHA256 != digest) {
+		return nmBrokerGenerationRequest{}, errors.New("NM broker configuration differs from official preflight")
+	}
+	request.ConfigSHA256 = digest
+	return request, nil
 }
