@@ -137,6 +137,41 @@ func TestHostedForeignStateSafetyProvesOccupiedAllocationAndBroadCoexistence(t *
 	}
 }
 
+func TestHostedForeignDefaultDNSOwnershipUsesInstalledPackageAndPreservesIndependentLink(t *testing.T) {
+	script := readHostedSafetyFile(t, hostedForeignStateSafety)
+	qualifyStart := strings.Index(script, "qualify_foreign_default_dns_ownership() {")
+	runStart := strings.Index(script, "\nrun_scenario() {")
+	if qualifyStart < 0 || runStart <= qualifyStart {
+		t.Fatal("installed-package foreign default DNS scenario is missing")
+	}
+	qualify := script[qualifyStart:runStart]
+	requireHostedSafetyMarkers(t, qualify,
+		`FOREIGN_DNS_DOMAIN="~."`,
+		`resolvectl domain "${FOREIGN_DNS_LINK}" "${FOREIGN_DNS_DOMAIN}"`,
+		`resolvectl default-route "${FOREIGN_DNS_LINK}" yes`,
+		"/usr/bin/podlaz connect",
+		"Another VPN or network service controls default DNS (~.)",
+		"No new Podlaz VPN connection changes were applied.",
+		"HTTP 500",
+		"! ip link show dev podlaz0",
+		"! nft list table inet podlaz",
+		"! find /run/podlaz/transactions",
+		"clean-inactive",
+		"assert_foreign_fixture",
+		`resolvectl domain "${FOREIGN_DNS_LINK}" "${original_domain}"`,
+		`resolvectl default-route "${FOREIGN_DNS_LINK}" no`,
+		"foreign.default_dns_blocked",
+		"foreign.default_dns_preserved",
+		"foreign.default_dns_released",
+	)
+	run := script[runStart:]
+	check := strings.Index(run, "qualify_foreign_default_dns_ownership ||")
+	connect := strings.Index(run, "release_control candidate-ready")
+	if check < 0 || connect <= check {
+		t.Fatal("foreign default DNS conflict must be rejected and released before positive installed-package connect")
+	}
+}
+
 func TestHostedSyntheticBaseAllowsPersistedCollisionFreeAddress(t *testing.T) {
 	base := readHostedSafetyFile(t, hostedSyntheticTUN)
 	forbidHostedSafetyMarkers(t, base,
