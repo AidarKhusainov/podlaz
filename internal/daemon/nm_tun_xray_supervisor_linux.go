@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -130,7 +131,7 @@ func (s nmConfinedXrayGeneration) Run(
 	if err := killNMGenerationCgroup(cgroup); err != nil {
 		return fmt.Errorf("NM Xray cohort revocation unproven: %w", err)
 	}
-	if err := verifyNMGenerationCgroupEmpty(cgroup); err != nil {
+	if err := waitNMGenerationCgroupEmpty(cgroup, 5*time.Second); err != nil {
 		return fmt.Errorf("NM Xray cohort quiescence unproven: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -219,4 +220,26 @@ func verifyNMGenerationCgroupEmpty(cgroup *os.File) error {
 		return errors.New("NM Xray cgroup is populated or cannot be proven empty")
 	}
 	return nil
+}
+
+// Wait after cgroup.kill: process exit and cgroup membership accounting are
+// asynchronous. Never turn a timeout into assumed quiescence.
+func waitNMGenerationCgroupEmpty(cgroup *os.File, timeout time.Duration) error {
+	if timeout <= 0 {
+		return errors.New("NM Xray quiescence timeout is invalid")
+	}
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	poll := time.NewTicker(50 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		if err := verifyNMGenerationCgroupEmpty(cgroup); err == nil {
+			return nil
+		}
+		select {
+		case <-deadline.C:
+			return errors.New("NM Xray cgroup did not prove empty before deadline")
+		case <-poll.C:
+		}
+	}
 }
