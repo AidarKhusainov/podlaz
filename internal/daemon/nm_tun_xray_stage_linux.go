@@ -5,8 +5,8 @@ package daemon
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
