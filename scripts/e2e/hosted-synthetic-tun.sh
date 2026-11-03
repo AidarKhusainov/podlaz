@@ -1226,6 +1226,8 @@ assert_opt_in_nm_fd_broker() {
   # This is an installed-package service boundary check inside the disposable
   # NetworkManager guest, never on the hosted runner's real network namespace.
   # Broker remains unstarted by default and has no user-facing Connect path.
+  # The substitution must run in the guest, not in the outer host.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'test "$(systemctl is-enabled podlaz-nm-fd-broker.service)" = static'
   guest_exec /bin/bash -lc '! systemctl is-active --quiet podlaz-nm-fd-broker.service'
   guest_exec systemctl start podlaz-nm-fd-broker.service
