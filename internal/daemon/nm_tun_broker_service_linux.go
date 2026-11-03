@@ -101,7 +101,7 @@ func RunNMOwnedFDBroker(ctx context.Context) error {
 	// The durable deny fence intentionally remains even if a cohort exits
 	// cleanly. Do not unlink the cgroup if it could still contain processes.
 	supervisor := nmConfinedXrayGeneration{
-		l3: newNML3Stager("/run/podlaz", nil),
+		l3:         newNML3Stager("/run/podlaz", nil),
 		generation: newNMGenerationFence("/run/podlaz", nil),
 	}
 	return supervisor.runWithStart(childCtx, fd, request.Kernel, request.NM,
