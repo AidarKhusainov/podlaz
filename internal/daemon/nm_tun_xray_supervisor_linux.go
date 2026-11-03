@@ -49,6 +49,12 @@ func (s nmConfinedXrayGeneration) Run(
 	// A single generation owns the broker's descriptor. Never keep a copy in
 	// podlazd after admitting the child, even if a later check fails.
 	defer fd.Close()
+	// Reject the packaged default service (and any similarly constrained
+	// caller) before touching durable NM generation authority. Credentials
+	// that will be needed after fork/exec cannot be reconstructed later.
+	if err := verifyNMGenerationBrokerCapabilities(); err != nil {
+		return err
+	}
 	if err := validateNMXrayBinaryAndConfig(configPath); err != nil {
 		return err
 	}
@@ -215,6 +221,18 @@ func openNMGenerationCgroup(path string) (*os.File, error) {
 	if err := verifyNMGenerationCgroupEmpty(cgroup); err != nil {
 		cgroup.Close()
 		return nil, fmt.Errorf("NM Xray cohort must be empty before admission: %w", err)
+	}
+	// A read-only ProtectControlGroups mount can pass Fstatfs and events
+	// inspection but cannot revoke the child after SIGKILL. Open the exact
+	// required kill control *without writing* before reserving a generation.
+	killFD, err := unix.Openat(fd, "cgroup.kill", unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		cgroup.Close()
+		return nil, fmt.Errorf("NM Xray cohort kill authority is unavailable: %w", err)
+	}
+	if err := unix.Close(killFD); err != nil {
+		cgroup.Close()
+		return nil, fmt.Errorf("NM Xray cohort kill authority close: %w", err)
 	}
 	return cgroup, nil
 }
