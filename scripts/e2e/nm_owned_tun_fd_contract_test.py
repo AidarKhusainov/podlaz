@@ -1,0 +1,118 @@
+"""Pure positive and negative contract coverage for inherited TUN admission."""
+import json
+import os
+from pathlib import Path
+import tempfile
+import unittest
+
+from nm_owned_tun_fd_contract import (
+    TUN_FLAGS, inherited_fd_environment, verify_tun_fd_identity, verify_xray_config,
+)
+
+
+class ExternalFdAdmissionTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "xray.json"
+        self.payload = {"inbounds": [{
+            "protocol": "tun", "settings": {
+                "name": "podlaz0", "MTU": 1500, "userLevel": 0,
+            },
+        }], "outbounds": [{"protocol": "freedom"}]}
+        self.store()
+
+    def store(self):
+        self.path.write_text(json.dumps(self.payload), encoding="utf-8")
+        os.chmod(self.path, 0o600)
+
+    def test_external_fd_env_overrides_untrusted_upstream_names(self):
+        inherited = {
+            "xray.tun.fd": "987654321",
+            "XRAY_TUN_FD": "112233",
+            "PODLAZ_NM_GUEST_TUN_FD": "4",
+            "PODLAZ_NM_GUEST_TUN_IFINDEX": "4242",
+            "HOME": "/tmp/qualified",
+        }
+        prepared = inherited_fd_environment(7, inherited)
+        self.assertEqual(prepared["XRAY_TUN_FD"], "7")
+        self.assertEqual(prepared["HOME"], "/tmp/qualified")
+        self.assertNotIn("xray.tun.fd", prepared)
+        self.assertNotIn("PODLAZ_NM_GUEST_TUN_FD", prepared)
+        self.assertNotIn("PODLAZ_NM_GUEST_TUN_IFINDEX", prepared)
+        for invalid in (0, -1, 2, True, "7"):
+            with self.subTest(fd=invalid):
+                with self.assertRaisesRegex(ValueError, "invalid external"):
+                    inherited_fd_environment(invalid, inherited)
+
+    def test_single_exact_tun_passes(self):
+        verify_xray_config(self.path, ifname="podlaz0", mtu=1500)
+
+    def test_mutators_and_mismatches_rejected(self):
+        for key, value in (("gateway", ["198.18.0.1/32"]),
+                           ("autoSystemRoutingTable", ["0.0.0.0/0"]),
+                           ("autoSystemDnsToGateway", True),
+                           ("autoOutboundsInterface", "auto")):
+            with self.subTest(key=key):
+                self.payload["inbounds"][0]["settings"][key] = value
+                self.store()
+                with self.assertRaisesRegex(ValueError, "must not manage"):
+                    verify_xray_config(self.path, ifname="podlaz0", mtu=1500)
+                del self.payload["inbounds"][0]["settings"][key]
+        self.store()
+        with self.assertRaisesRegex(ValueError, "MTU mismatch"):
+            verify_xray_config(self.path, ifname="podlaz0", mtu=1400)
+        with self.assertRaisesRegex(ValueError, "name collision"):
+            verify_xray_config(self.path, ifname="foreign0", mtu=1500)
+        self.payload["inbounds"].append(self.payload["inbounds"][0])
+        self.store()
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            verify_xray_config(self.path, ifname="podlaz0", mtu=1500)
+
+    def test_casefolded_xray_mutator_aliases_fail_closed(self):
+        self.payload["inbounds"][0]["settings"]["Gateway"] = ["198.18.0.1/32"]
+        self.store()
+        with self.assertRaisesRegex(ValueError, "must not manage"):
+            verify_xray_config(self.path, ifname="podlaz0", mtu=1500)
+        del self.payload["inbounds"][0]["settings"]["Gateway"]
+        self.store()
+        # A second case-folded spelling would be ambiguous to the upstream
+        # JSON decoder even if an earlier canonical value looked harmless.
+        source = self.path.read_text(encoding="utf-8")
+        source = source.replace('"MTU": 1500', '"MTU": 1500, "mtu": 1400')
+        self.assertNotEqual(source, self.path.read_text(encoding="utf-8"))
+        self.path.write_text(source, encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            verify_xray_config(self.path, ifname="podlaz0", mtu=1500)
+
+    def test_unsafe_file_rejected(self):
+        os.chmod(self.path, 0o644)
+        with self.assertRaisesRegex(ValueError, "private"):
+            verify_xray_config(self.path, ifname="podlaz0", mtu=1500)
+
+    def test_exact_ifindex_mtu_and_fd_type(self):
+        link = {"ifname": "podlaz0", "ifindex": 12, "mtu": 1500,
+                "flags": ["UP"], "linkinfo": {"info_kind": "tun"}}
+        def check(before, after, flags=TUN_FLAGS):
+            verify_tun_fd_identity(
+                name="podlaz0", flags=flags, expected_name="podlaz0",
+                before=before, after=after, expected_index=12,
+                expected_mtu=1500,
+            )
+        check(link, link)
+        for field, wrong in (("ifindex", 13), ("mtu", 1400),
+                             ("ifname", "foreign0"), ("flags", [])):
+            with self.subTest(field=field):
+                bad = {**link, field: wrong}
+                with self.assertRaisesRegex(ValueError, "ownership changed"):
+                    check(link, bad)
+        with self.assertRaisesRegex(ValueError, "not an"):
+            check(link, link, flags=0)
+        for extra_flag in (0x0100, 0x4000):
+            with self.subTest(flag=extra_flag):
+                with self.assertRaisesRegex(ValueError, "packet mode"):
+                    check(link, link, flags=TUN_FLAGS | extra_flag)
+
+
+if __name__ == "__main__":
+    unittest.main()
