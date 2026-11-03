@@ -61,6 +61,9 @@ func (s nmConfinedXrayGeneration) Run(
 	if !identity.DropCredentials || identity.UID == 0 || identity.GID == 0 {
 		return errors.New("NM Xray admission cannot establish dedicated unprivileged identity")
 	}
+	if err := verifyNMXrayConfigChildAccess(configPath, identity.UID, identity.GID); err != nil {
+		return fmt.Errorf("NM Xray config inaccessible to restricted child before reservation: %w", err)
+	}
 
 	// No generation may be reserved or admitted from inferred NM identities.
 	// Compare D-Bus authority against the persisted in-memory L3 selection.
