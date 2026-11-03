@@ -84,7 +84,7 @@ func logConnectFailure(req api.ConnectRequest, err error) {
 	phase, transactionID, rollbackStatus := tunFailureLogFields(err)
 	classification := "error"
 	var dnsOwnership *netexecutor.DefaultDNSOwnershipError
-	switch { 
+	switch {
 	case errors.As(err, &dnsOwnership) && dnsOwnership.Unknown:
 		classification = "dns-ownership-unavailable"
 	case errors.As(err, &dnsOwnership):
