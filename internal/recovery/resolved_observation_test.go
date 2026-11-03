@@ -94,6 +94,20 @@ func TestResolvedRecoveryDoesNotRediscoverEmptyPostRevertRecord(t *testing.T) {
 	}
 }
 
+func TestObserveResolvedLinkAcceptsSystemd259DefaultRouteField(t *testing.T) {
+	result := CommandResult{Stdout: `Link 7 (podlaz0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: yes
+Current DNS Server: 192.0.2.53
+       DNS Servers: 192.0.2.53
+        DNS Domain: ~.`}
+
+	if got := observeResolvedLink(context.Background(), result, nil); got != resolvedLinkPresent {
+		t.Fatalf("systemd 259 managed DNS link must be observed as present, got %v", got)
+	}
+}
+
 func TestObserveResolvedLinkFailsClosedForOperationalAndAmbiguousResults(t *testing.T) {
 	cancelledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
