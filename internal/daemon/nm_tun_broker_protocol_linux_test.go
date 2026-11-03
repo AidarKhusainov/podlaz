@@ -62,7 +62,7 @@ func TestNMBrokerRequestFailsClosedForMissingOrAmbiguousAuthority(t *testing.T) 
 	if _, err := decodeNMBrokerGenerationRequest(bytes.Repeat([]byte("x"), nmBrokerRequestMaxBytes+1)); err == nil {
 		t.Fatal("oversized request admitted")
 	}
-	if _, err := decodeNMBrokerGenerationRequest([]byte(strings.TrimSuffix(string(data), "}")+`,"unsupported":true}`)); err == nil {
+	if _, err := decodeNMBrokerGenerationRequest([]byte(strings.TrimSuffix(string(data), "}") + `,"unsupported":true}`)); err == nil {
 		t.Fatal("unknown broker request field admitted")
 	}
 }
