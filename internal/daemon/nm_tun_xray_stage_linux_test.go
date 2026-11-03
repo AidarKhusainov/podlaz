@@ -12,11 +12,9 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
-func TestNMOfficialXrayCompatibilityPrecedesEveryNetworkManagerWrite(t *testing.T) {
+func TestNMOfficialXrayPreflightIsSeparateFromEveryProtectedMutation(t *testing.T) {
 	plan := testNML3Plan()
-	opts := engine.XrayTunConfigOptions{
-		Name: plan.Interface, MTU: int(plan.MTU), EgressMark: 101,
-	}
+	opts := engine.XrayTunConfigOptions{Name: plan.Interface, MTU: int(plan.MTU), EgressMark: 101}
 	for _, tc := range []struct {
 		name           string
 		preflightError bool
@@ -28,72 +26,93 @@ func TestNMOfficialXrayCompatibilityPrecedesEveryNetworkManagerWrite(t *testing.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var steps []string
-			marker := errors.New("sensitive runtime rejection")
-			stageErr := errors.New("ambiguous D-Bus mutation")
-			source := []byte(`{"inbounds":[]}`)
-			cfg, intent, err := stageNMOwnedXrayWith(
-				context.Background(), profile.Profile{}, "00112233445566778899aabbccddeeff",
-				101, opts, plan,
+			rejected := errors.New("official binary refused configuration")
+			ambiguous := errors.New("ambiguous NetworkManager D-Bus mutation")
+			raw := []byte(`{"inbounds":[]}`)
+			prepared, err := prepareNMOwnedXrayWith(context.Background(), profile.Profile{}, opts,
 				func(profile.Profile, engine.XrayTunConfigOptions) ([]byte, error) {
 					steps = append(steps, "generate")
-					return source, nil
+					return raw, nil
 				},
 				func(context.Context, []byte) error {
 					steps = append(steps, "official-preflight")
 					if tc.preflightError {
-						return marker
+						return rejected
 					}
 					return nil
-				},
+				})
+			if tc.preflightError {
+				if !errors.Is(err, rejected) || prepared != nil ||
+					!reflect.DeepEqual(steps, []string{"generate", "official-preflight"}) {
+					t.Fatalf("rejected config reached mutation phase: %v, steps=%v", err, steps)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A real caller must arm protection only here, after preflight.
+			steps = append(steps, "arm-envelope")
+			config, intent, err := stagePreparedNMOwnedXrayWith(context.Background(), prepared,
+				"00112233445566778899aabbccddeeff", plan,
 				func(context.Context, string, uint32, nmL3Plan) (nmL3Intent, error) {
 					steps = append(steps, "NM-stage")
 					if tc.stageError {
-						return nmL3Intent{Stage: "planned"}, stageErr
+						return nmL3Intent{Stage: "planned"}, ambiguous
 					}
 					return nmL3Intent{Stage: "activating"}, nil
-				},
-			)
-			expected := []string{"generate", "official-preflight", "NM-stage"}
-			if tc.preflightError {
-				expected = expected[:2]
-				if !errors.Is(err, marker) || len(cfg) != 0 || intent.Stage != "" {
-					t.Fatalf("incompatible config reached NM or returned authority: %v", err)
+				})
+			if tc.stageError {
+				if !errors.Is(err, ambiguous) || len(config) != 0 || intent.Stage != "planned" {
+					t.Fatalf("ambiguous NM intent discarded: %v %#v", err, intent)
 				}
-			} else if tc.stageError {
-				if !errors.Is(err, stageErr) || len(cfg) != 0 || intent.Stage != "planned" {
-					t.Fatalf("ambiguous NM mutation was erased: %v %#v", err, intent)
-				}
-			} else if err != nil || intent.Stage != "activating" || string(cfg) != string(source) {
-				t.Fatalf("accepted config changed: %v %#v", err, intent)
+			} else if err != nil || string(config) != string(raw) || intent.Stage != "activating" {
+				t.Fatalf("accepted official config changed: %v %#v", err, intent)
 			}
+			expected := []string{"generate", "official-preflight", "arm-envelope", "NM-stage"}
 			if !reflect.DeepEqual(steps, expected) {
-				t.Fatalf("unsafe NM/official-Xray order: %v, expected %v", steps, expected)
+				t.Fatalf("unsafe official preflight/Privacy Envelope/NM order: %v", steps)
 			}
 		})
 	}
 }
 
-func TestNMOfficialXrayRejectsPlanDriftWithoutEvenGeneratingConfig(t *testing.T) {
+func TestNMPreparedOfficialXrayConfigIsBoundToExactPlanAndUnmodifiedBytes(t *testing.T) {
 	plan := testNML3Plan()
-	called := false
-	generate := func(profile.Profile, engine.XrayTunConfigOptions) ([]byte, error) {
-		called = true
-		return []byte("{}"), nil
+	opts := engine.XrayTunConfigOptions{Name: plan.Interface, MTU: int(plan.MTU), EgressMark: 101}
+	original := []byte(`{"inbounds":[]}`)
+	proof, err := prepareNMOwnedXrayWith(context.Background(), profile.Profile{}, opts,
+		func(profile.Profile, engine.XrayTunConfigOptions) ([]byte, error) { return original, nil },
+		func(context.Context, []byte) error { return nil })
+	if err != nil {
+		t.Fatal(err)
 	}
-	preflight := func(context.Context, []byte) error { called = true; return nil }
-	stage := func(context.Context, string, uint32, nmL3Plan) (nmL3Intent, error) {
-		called = true
-		return nmL3Intent{}, nil
+	mutations := []struct {
+		name string
+		edit func(*nmOwnedXrayPrepared, *nmL3Plan)
+	}{
+		{"interface", func(p *nmOwnedXrayPrepared, _ *nmL3Plan) { p.interfaceName = "foreign0" }},
+		{"MTU", func(p *nmOwnedXrayPrepared, _ *nmL3Plan) { p.mtu++ }},
+		{"mark", func(p *nmOwnedXrayPrepared, _ *nmL3Plan) { p.mark++ }},
+		{"payload", func(p *nmOwnedXrayPrepared, _ *nmL3Plan) { p.config[0] = 'x' }},
+		{"plan", func(_ *nmOwnedXrayPrepared, p *nmL3Plan) { p.MTU-- }},
 	}
-	for _, tc := range []engine.XrayTunConfigOptions{
-		{Name: "foreign0", MTU: int(plan.MTU), EgressMark: 101},
-		{Name: plan.Interface, MTU: 1300, EgressMark: 101},
-		{Name: plan.Interface, MTU: int(plan.MTU), EgressMark: 102},
-	} {
-		_, _, err := stageNMOwnedXrayWith(context.Background(), profile.Profile{},
-			"00112233445566778899aabbccddeeff", 101, tc, plan, generate, preflight, stage)
-		if err == nil || called {
-			t.Fatalf("mismatched NM config reached generator or network mutation: %v", err)
-		}
+	for _, tc := range mutations {
+		t.Run(tc.name, func(t *testing.T) {
+			clone := *proof
+			clone.config = append([]byte(nil), proof.config...)
+			changedPlan := plan
+			tc.edit(&clone, &changedPlan)
+			called := false
+			_, _, err := stagePreparedNMOwnedXrayWith(context.Background(), &clone,
+				"00112233445566778899aabbccddeeff", changedPlan,
+				func(context.Context, string, uint32, nmL3Plan) (nmL3Intent, error) {
+					called = true
+					return nmL3Intent{}, nil
+				})
+			if err == nil || called {
+				t.Fatalf("altered official Xray proof reached NM mutation: %v", err)
+			}
+		})
 	}
 }
