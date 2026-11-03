@@ -128,7 +128,7 @@ func TestHostedVMBootAuthorityRestartExperimentWorkflowHasSingleBudgetedJob(t *t
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, marker := range []string{"restart_cycles:", "type: choice", "default: '1'", "options: ['1', '2', '3']", "PODLAZ_E2E_BOOT_RESTART_CYCLES:", "inputs.restart_cycles || '1'", "inputs.restart_cycles != '1' && 30 || 150"} {
+	for _, marker := range []string{"restart_cycles:", "type: choice", "default: '1'", "options: ['1', '2', '3']", "PODLAZ_E2E_BOOT_RESTART_CYCLES:", "inputs.restart_cycles || '1'", "timeout-minutes: 30"} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("manual diagnostic budget missing %q", marker)
 		}
