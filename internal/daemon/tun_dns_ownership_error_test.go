@@ -16,11 +16,11 @@ import (
 
 func TestDefaultDNSOwnershipErrorsAreTypedAndHaveExactCleanupMessages(t *testing.T) {
 	cases := []struct {
-		name           string
-		unknown        bool
-		rollback       string
-		wantStatus     int
-		wantPhrase     string
+		name            string
+		unknown         bool
+		rollback        string
+		wantStatus      int
+		wantPhrase      string
 		forbiddenPhrase string
 	}{
 		{
