@@ -141,19 +141,17 @@ func receiveNMBrokerRequest(peer *net.UnixConn) (nmBrokerGenerationRequest, *os.
 	}
 	var received []int
 	messages, parseErr := unix.ParseSocketControlMessage(oob[:oobn])
-	if parseErr == nil {
-		for _, cm := range messages {
-			if cm.Header.Level != unix.SOL_SOCKET || cm.Header.Type != unix.SCM_RIGHTS {
-				parseErr = errors.New("unexpected NM broker ancillary message")
-				break
-			}
-			fds, e := unix.ParseUnixRights(&cm)
-			if e != nil {
-				parseErr = e
-				break
-			}
-			received = append(received, fds...)
+	for _, cm := range messages {
+		if cm.Header.Level != unix.SOL_SOCKET || cm.Header.Type != unix.SCM_RIGHTS {
+			parseErr = errors.New("unexpected NM broker ancillary message")
+			continue
 		}
+		fds, e := unix.ParseUnixRights(&cm)
+		if e != nil {
+			parseErr = e
+			continue
+		}
+		received = append(received, fds...)
 	}
 	// Every received descriptor must be closed, including malformed and
 	// extra-fd requests. Never allow any unowned copy to remain in the broker.
