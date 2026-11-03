@@ -103,7 +103,7 @@ func TestSignedAPTRepositoryProductionPublicationIsGuardedAndAtomic(t *testing.T
 		"PODLAZ_APT_SIGNING_PRIVATE_KEY",
 		"PODLAZ_APT_SIGNING_PASSPHRASE",
 		"PODLAZ_APT_SIGNING_FINGERPRINT",
-		"actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+		"actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
 		"bash scripts/ci/verify-release-artifacts.sh",
 		"gh attestation verify",
 		"bash scripts/e2e/hosted-apt-repository.sh",
