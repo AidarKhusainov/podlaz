@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/AidarKhusainov/podlaz/internal/app/daemon"
+	daemonruntime "github.com/AidarKhusainov/podlaz/internal/daemon"
 )
 
 func main() {
@@ -14,7 +15,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "podlazd: invalid restricted child invocation")
 			os.Exit(1)
 		}
-		if err := daemon.RunNMOwnedRestrictedXrayChild(os.Args[2]); err != nil {
+		if err := daemonruntime.RunNMOwnedRestrictedXrayChild(os.Args[2]); err != nil {
 			fmt.Fprintln(os.Stderr, "podlazd: restricted Xray launch failed:", err)
 			os.Exit(1)
 		}
