@@ -202,9 +202,15 @@ func openNMGenerationCgroup(path string) (*os.File, error) {
 	}
 	cgroup := os.NewFile(uintptr(fd), path)
 	var fs unix.Statfs_t
+	var st unix.Stat_t
 	if err := unix.Fstatfs(fd, &fs); err != nil || uint64(fs.Type) != uint64(unix.CGROUP2_SUPER_MAGIC) {
 		cgroup.Close()
 		return nil, errors.New("NM Xray admission requires a real cgroup v2 directory")
+	}
+	if err := unix.Fstat(fd, &st); err != nil || st.Mode&unix.S_IFMT != unix.S_IFDIR ||
+		st.Uid != 0 || st.Mode&0o022 != 0 {
+		cgroup.Close()
+		return nil, errors.New("NM Xray admission requires a protected root-owned cgroup")
 	}
 	if err := verifyNMGenerationCgroupEmpty(cgroup); err != nil {
 		cgroup.Close()
