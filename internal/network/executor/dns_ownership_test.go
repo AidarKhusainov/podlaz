@@ -3,12 +3,10 @@ package executor
 import (
 	"context"
 	"errors"
-	"net/http"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
@@ -192,7 +190,3 @@ func TestDefaultDNSOwnershipSafeLinkName(t *testing.T) {
 		t.Fatalf("unsanitized foreign link escaped into error: %q", err)
 	}
 }
-
-// Keep package-level compiler coverage of the DNS plan types composed above.
-var _ = planner.DNSActionConfigure
-var _ = http.StatusConflict
