@@ -130,7 +130,11 @@ func (s nmConfinedXrayGeneration) Run(
 		if err := killNMGenerationCgroup(cgroup); err != nil {
 			return fmt.Errorf("NM Xray cohort shutdown unproven: %w", err)
 		}
-		processErr = <-waited
+		select {
+		case processErr = <-waited:
+		case <-time.After(5 * time.Second):
+			return errors.New("NM Xray child exit unconfirmed after cgroup-wide kill")
+		}
 	}
 	// The tracked process may have exited while descendants still hold copies
 	// of the TUN FD. Kill the whole cohort and independently verify emptiness.
