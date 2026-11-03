@@ -1248,7 +1248,17 @@ assert_opt_in_nm_fd_broker() {
   # shellcheck disable=SC2016
   nm_broker_guest_check socket-created /bin/bash -lc 'for i in $(seq 1 50); do test -S /run/podlaz-nm-fd/broker.sock && exit 0; systemctl is-active --quiet podlaz-nm-fd-broker.service || exit 1; sleep 0.1; done; exit 1'
   nm_broker_guest_check ordinary-user-denial runuser -u e2e -- python3 /workspace/scripts/e2e/nm_fd_broker_guest_smoke.py
+  nm_broker_guest_check invalid-root-authority python3 /workspace/scripts/e2e/nm_fd_broker_guest_smoke.py reject-invalid-root-authority
+  # Invalid authority must terminate the one-shot broker, without a durable
+  # reservation or automatic systemd restart. No Retry-on-failure shortcut.
+  # shellcheck disable=SC2016
+  nm_broker_guest_check rejected-broker-stopped /bin/bash -lc 'for i in $(seq 1 50); do systemctl is-active --quiet podlaz-nm-fd-broker.service || exit 0; sleep 0.1; done; exit 1'
   nm_broker_guest_check no-generation test ! -e /run/podlaz/nm-owned-generation.json
+  # A fresh explicitly requested service instance is allowed only because
+  # the invalid request never reserved a generation or launched Xray.
+  nm_broker_guest_check unit-restart systemctl start podlaz-nm-fd-broker.service
+  # shellcheck disable=SC2016
+  nm_broker_guest_check socket-recreated /bin/bash -lc 'for i in $(seq 1 50); do test -S /run/podlaz-nm-fd/broker.sock && exit 0; systemctl is-active --quiet podlaz-nm-fd-broker.service || exit 1; sleep 0.1; done; exit 1'
   nm_broker_guest_check unit-stop systemctl stop podlaz-nm-fd-broker.service
   nm_broker_guest_check socket-removed /bin/bash -lc 'test ! -S /run/podlaz-nm-fd/broker.sock'
   nm_broker_guest_check default-daemon-intact systemctl is-active --quiet podlazd.service
