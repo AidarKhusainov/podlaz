@@ -42,7 +42,7 @@ test -f /usr/lib/systemd/system/podlaz-nm-fd-broker.service
 grep -Fx 'Delegate=yes' /usr/lib/systemd/system/podlaz-nm-fd-broker.service
 grep -Fx 'Restart=no' /usr/lib/systemd/system/podlaz-nm-fd-broker.service
 grep -Fx 'RuntimeDirectoryMode=0700' /usr/lib/systemd/system/podlaz-nm-fd-broker.service
-if grep -Eq '^\\[Install\\]|^WantedBy=|^RequiredBy=' /usr/lib/systemd/system/podlaz-nm-fd-broker.service; then
+if grep -Eq '^\[Install\]|^WantedBy=|^RequiredBy=' /usr/lib/systemd/system/podlaz-nm-fd-broker.service; then
   echo "opt-in NM broker was accidentally configured for automatic enablement" >&2
   exit 1
 fi
