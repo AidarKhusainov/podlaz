@@ -43,12 +43,15 @@ Do not recursively read every document/source directory before the task requires
 
 These rules apply when drafting an Issue, implementation plan, or prompt for another agent. **Task authoring is a separate deliverable:** do not implement, create Issues/PRs, trigger workflows, or change the repository unless explicitly requested.
 
+Classify the assignment as read-only audit, diagnosis, feasibility research, implementation, or integration/closure. Match its evidence and stop/go expectations to that task type.
+
 - Verify the current repository state and task-relevant canonical contracts, code/tests, Issues, PRs, and previous attempts before prescribing work. Reference the relevant issue/PR, base branch or known SHA, and evidence; distinguish verified facts from hypotheses and unknowns. Never invent current HEAD, CI results, blockers, or acceptance coverage.
 - Check whether the problem is already solved, duplicated, superseded, or blocked. State why new work is necessary and how it relates to existing work. Do not prescribe repeating a disproven experiment or reopening deliberately closed scope without new grounds.
 - Specify the **problem and desired observable outcome**, not an assumed implementation. Define a narrow boundary, explicit non-goals, dependencies/prerequisites, and product/security/compatibility constraints. Where architecture or feasibility is uncertain, assign an evidence-gathering spike with a decisive stop/go gate before production implementation.
 - Make acceptance criteria independently verifiable: map each requirement to an observable behavior, relevant existing or missing test, real integration evidence where needed, and required failure/negative cases. Separate research evidence, component tests, full integrated acceptance, and post-merge/release validation. Never demand an impossible proof or call an unchecked assertion complete.
 - Keep the task self-contained but concise: provide authoritative links, concrete known symptoms and repro steps, expected outcome, scope, acceptance evidence, and decisions reserved for the owner. Refer to this file for shared engineering/CI rules instead of copying them into every prompt.
 - Avoid prescribing speculative code design, a chain of staged PRs, arbitrary timeouts, or a mandatory merge/release. Delegate implementation choices to the executor within established constraints. Flag decisions that materially alter security, compatibility, scope, or product behavior for explicit owner approval.
+- On handoff, distinguish source HEAD from tested PR merge commits, record pending/failed checks and unresolved owner decisions, and identify the next concrete action. Do not copy a stale checkpoint as current fact.
 - Before handing off, check that the executor can identify a first meaningful verification step, the intended stopping conditions, and what to report if the hypothesis is false or the environment cannot supply the required evidence. A task that cannot yet be scoped safely should ask a specific owner question rather than manufacture certainty.
 
 ## Evidence-driven scope and investigation
@@ -60,19 +63,6 @@ These rules apply when drafting an Issue, implementation plan, or prompt for ano
 - Separate facts from hypotheses and unknowns. For nontrivial experiments, specify a falsifiable hypothesis, decisive evidence, and stop criteria. Test critical feasibility/security constraints early, preferably with a minimal real end-to-end scenario.
 - If repeated changes leave the same blocker unresolved, reconsider assumptions, prior evidence, and alternatives before adding code. Preserve negative results rather than weakening acceptance or interpreting unrelated GREEN as a fix.
 - A blocker for one approach does not automatically block the task. Explore safe in-scope alternatives; otherwise report the evidence and precise prerequisite to proceed. Ask the owner when material requirements, semantics, safety, or compatibility cannot be reliably determined.
-
-## Task authoring and agent handoff
-
-These rules also apply when the deliverable is an Issue, plan, implementation assignment, or prompt for another agent; no code change is required merely to write one.
-
-- **Verify before assigning.** Identify the current repository/base, relevant Issue/PR status, canonical code/tests, existing coverage, prior attempts, and owner decisions. Resolve stale handoff claims against current evidence. Do not claim a root cause, implementation state, or CI result without support.
-- **Specify the outcome, not an assumed implementation.** State the user-observable problem, desired result, boundaries, dependencies, and why the work is needed. Separate proven facts from hypotheses and unresolved decisions. Do not turn a suggested solution into a requirement unless justified or explicitly approved.
-- **Define testable acceptance.** List concrete missing behaviors/invariants, positive and negative cases where relevant, required evidence (unit/integration/installed-runtime/security), supported environments, and an objective completion condition. Do not count unrelated existing GREEN, test names, or a successful PoC as acceptance.
-- **Control scope and sequencing.** Define in-scope/out-of-scope work, compatibility and security constraints, and prior failed approaches that must not be repeated without new evidence. Split large work only along independently meaningful validation or review boundaries; do not prescribe a stack of unused components as progress.
-- **Distinguish task types.** Label exploratory feasibility, diagnostic investigation, implementation, read-only audit, or integration/closure accurately. Research tasks need falsifiable hypotheses, decision criteria, and explicit stop/promotion conditions; implementation tasks require a plausible path to integrated acceptance.
-- **Make blockers actionable.** Identify decisions that belong to the owner and evidence still needed. When feasibility or semantics are unresolved, request a specific decision or assign a bounded investigation rather than demanding an unproven production outcome.
-- **Handoff only current facts.** Include links to authoritative issue/PR, exact relevant refs and evidence, known failures/negative findings, pending checks, and the next concrete action. Do not copy stale status summaries, duplicate repository policy, or imply merge/release authority.
-- **Review the assignment itself.** Before publishing, check that the scope is coherent, assumptions are labeled, acceptance is verifiable, constraints are compatible, and the executor can recognize success, disproval, and a genuine blocker. Revise ambiguous or contradictory requirements instead of passing them downstream.
 
 ## Development workflow
 
