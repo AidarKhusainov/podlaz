@@ -52,6 +52,9 @@ func TestHostedSyntheticTUNWorkflowIsThinPermanentQualification(t *testing.T) {
 		"bash scripts/build-deb.sh",
 		"bash scripts/e2e/hosted-synthetic-tun.sh",
 		"hosted-synthetic-tun.txt",
+		"Run installed resolved recovery qualification on systemd 259",
+		"PODLAZ_E2E_GUEST_SUITE: resolute",
+		"podlaz-hosted-systemd259-resolved",
 	)
 
 	for _, action := range []string{"actions/checkout", "actions/setup-go", "actions/upload-artifact"} {
@@ -130,6 +133,11 @@ func TestHostedSyntheticTUNScenarioOwnsCanonicalLifecycle(t *testing.T) {
 		"assert_clean_recovery_json_file",
 		"assert_public_artifact_privacy()",
 		"cleanup_outer_plumbing()",
+		`PODLAZ_E2E_GUEST_SUITE="${PODLAZ_E2E_GUEST_SUITE:-noble}"`,
+		`debootstrap --variant=minbase "${PODLAZ_E2E_GUEST_SUITE}"`,
+		"qualify_systemd259_active_resolved()",
+		"qualify_systemd259_inactive_resolved()",
+		"qualify_systemd259_reconnect()",
 		"/dev/net/tun",
 		"inbound_settings",
 	)
@@ -370,6 +378,12 @@ func TestHostedSyntheticTUNEvidenceSchemaIsBounded(t *testing.T) {
 		"guest.baseline_restored",
 		"outer.cleanup",
 		"artifact.privacy",
+		"resolved.systemd259",
+		"resolved.default_route_field",
+		"resolved.active_status",
+		"resolved.active_recovery",
+		"resolved.inactive_status",
+		"resolved.reconnect",
 	} {
 		if !strings.Contains(script, key) {
 			t.Fatalf("hosted synthetic TUN evidence schema lost %q", key)

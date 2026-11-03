@@ -3,6 +3,7 @@ package recovery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,6 +95,108 @@ func TestResolvedRecoveryDoesNotRediscoverEmptyPostRevertRecord(t *testing.T) {
 	}
 }
 
+func TestObserveResolvedLinkPreservesSystemd255ManagedStatus(t *testing.T) {
+	if got := observeResolvedLink(context.Background(), CommandResult{Stdout: resolvedLinkExists().stdout}, nil); got != resolvedLinkPresent {
+		t.Fatalf("systemd 255 managed DNS link must remain present, got %v", got)
+	}
+}
+
+func TestObserveResolvedLinkAcceptsSystemd259DefaultRouteField(t *testing.T) {
+	result := CommandResult{Stdout: `Link 7 (podlaz0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: yes
+Current DNS Server: 192.0.2.53
+       DNS Servers: 192.0.2.53
+        DNS Domain: ~.`}
+
+	if got := observeResolvedLink(context.Background(), result, nil); got != resolvedLinkPresent {
+		t.Fatalf("systemd 259 managed DNS link must be observed as present, got %v", got)
+	}
+}
+
+func TestPlanWithOptionsAcceptsSystemd259ManagedResolvedLink(t *testing.T) {
+	runner := fakeMissingResourcesRunner()
+	runner.commands["resolvectl status podlaz0 --no-pager"] = fakeCommand{stdout: `Link 7 (podlaz0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: yes
+Current DNS Server: 192.0.2.53
+       DNS Servers: 192.0.2.53
+        DNS Domain: ~.`}
+	runner.commands["ip link show dev podlaz0"] = fakeCommand{stdout: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"}
+
+	plan := PlanWithOptions(context.Background(), Options{
+		Runner:     runner,
+		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
+	})
+
+	assertNoCandidateKind(t, plan, managedDNSCandidateKind)
+	if len(plan.Warnings) != 0 {
+		t.Fatalf("valid systemd 259 managed DNS link must not produce recovery warnings: %#v", plan.Warnings)
+	}
+}
+
+func TestObserveResolvedLinkAcceptsSystemd259EmptyResolvedRecord(t *testing.T) {
+	result := CommandResult{Stdout: `Link 7 (podlaz0)
+    Current Scopes: none
+         Protocols: -DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+     Default Route: no`}
+
+	if got := observeResolvedLink(context.Background(), result, nil); got != resolvedLinkAbsent {
+		t.Fatalf("systemd 259 empty resolved link must be proven absent, got %v", got)
+	}
+}
+
+func TestObserveResolvedLinkRejectsAmbiguousSystemd259DefaultRouteField(t *testing.T) {
+	base := `Link 7 (podlaz0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+%s
+Current DNS Server: 192.0.2.53
+       DNS Servers: 192.0.2.53
+        DNS Domain: ~.`
+
+	tests := []struct {
+		name  string
+		field string
+	}{
+		{name: "polarity conflict", field: "     Default Route: no"},
+		{name: "invalid value", field: "     Default Route: maybe"},
+		{name: "empty value", field: "     Default Route:"},
+		{name: "duplicate field", field: "     Default Route: yes\n     Default Route: yes"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CommandResult{Stdout: fmt.Sprintf(base, tt.field)}
+			if got := observeResolvedLink(context.Background(), result, nil); got != resolvedLinkUnknown {
+				t.Fatalf("ambiguous systemd 259 Default Route field must fail closed, got %v", got)
+			}
+		})
+	}
+
+	for _, tt := range []struct {
+		name      string
+		protocols string
+	}{
+		{name: "missing protocol polarity", protocols: "-LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported"},
+		{name: "conflicting protocol polarity", protocols: "+DefaultRoute -DefaultRoute -LLMNR -mDNS"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			output := strings.Replace(
+				fmt.Sprintf(base, "     Default Route: yes"),
+				"+DefaultRoute -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported",
+				tt.protocols,
+				1,
+			)
+			if got := observeResolvedLink(context.Background(), CommandResult{Stdout: output}, nil); got != resolvedLinkUnknown {
+				t.Fatalf("ambiguous Protocols polarity must fail closed, got %v", got)
+			}
+		})
+	}
+}
+
 func TestObserveResolvedLinkFailsClosedForOperationalAndAmbiguousResults(t *testing.T) {
 	cancelledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -116,6 +219,7 @@ func TestObserveResolvedLinkFailsClosedForOperationalAndAmbiguousResults(t *test
 		{name: "unexpected exit code", ctx: context.Background(), result: CommandResult{RawStderr: "unexpected\n", Stderr: "unexpected", ExitCode: 2}, err: resolvedTestExitError{code: 2}},
 		{name: "malformed success", ctx: context.Background(), result: CommandResult{Stdout: "unexpected successful output"}},
 		{name: "duplicate target sections", ctx: context.Background(), result: CommandResult{Stdout: resolvedLinkExists().stdout + "\n" + resolvedLinkExists().stdout}},
+		{name: "wrong target link", ctx: context.Background(), result: CommandResult{Stdout: strings.Replace(resolvedLinkExists().stdout, "(podlaz0)", "(eth0)", 1)}},
 		{name: "concrete non-podlaz dns", ctx: context.Background(), result: CommandResult{Stdout: `Link 7 (podlaz0)
        DNS Servers: 203.0.113.53`}},
 	}

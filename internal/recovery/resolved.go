@@ -157,6 +157,7 @@ func parseManagedResolvedLinkStatus(output string) (netsnapshot.ResolvedLink, bo
 	var link netsnapshot.ResolvedLink
 	seenHeader := false
 	seenFields := make(map[string]bool)
+	explicitDefaultRoute := resolvedDefaultRouteUnknown
 	lastField := ""
 
 	for _, rawLine := range strings.Split(output, "\n") {
@@ -205,6 +206,15 @@ func parseManagedResolvedLinkStatus(output string) (netsnapshot.ResolvedLink, bo
 				return netsnapshot.ResolvedLink{}, false
 			}
 			link.Protocols = appendResolvedTokens(nil, value)
+		case "Default Route":
+			switch value {
+			case "yes":
+				explicitDefaultRoute = resolvedDefaultRoutePositive
+			case "no":
+				explicitDefaultRoute = resolvedDefaultRouteNegative
+			default:
+				return netsnapshot.ResolvedLink{}, false
+			}
 		case "Current DNS Server":
 			fields := strings.Fields(value)
 			if len(fields) != 1 {
@@ -229,6 +239,9 @@ func parseManagedResolvedLinkStatus(output string) (netsnapshot.ResolvedLink, bo
 	}
 
 	if !seenHeader || !seenFields["Current Scopes"] || !seenFields["Protocols"] {
+		return netsnapshot.ResolvedLink{}, false
+	}
+	if seenFields["Default Route"] && explicitDefaultRoute != resolvedDefaultRoutePolarityOf(link.Protocols) {
 		return netsnapshot.ResolvedLink{}, false
 	}
 	return link, true
