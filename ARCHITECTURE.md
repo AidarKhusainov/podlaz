@@ -329,3 +329,5 @@ external archive is outside that guarantee and must be reviewed before sharing.
 Keep domain behavior below transport/composition boundaries. `internal/daemon/server.go` is the composition root: it wires collaborators and ordering but should delegate coherent setup/startup/HTTP/serve/shutdown phases to private helpers rather than accumulating domain logic.
 
 Behavioral changes require tests that express the invariant. Structural cleanup must preserve public CLI/API/state schema, package/service behavior, network ownership semantics, failure ordering, and recovery semantics unless a separate issue explicitly changes them.
+
+The optional NM backend exclusively uses the separately pinned **unmodified official** Xray release and validates the entire native/grouped generated configuration before any network mutation. Incompatible profiles may fail closed early with an explicit standard full-TUN alternative; provider fields are never rewritten, silently downgraded or flattened. These compatibility checks alone do not activate or approve an NM production backend. The existing default Xray-owned full-TUN behavior remains unchanged.
