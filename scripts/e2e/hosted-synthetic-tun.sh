@@ -1217,6 +1217,57 @@ PY
   record_evidence tun.doctor "${doctor_state}"
 }
 
+
+qualify_systemd259_active_resolved() {
+  [[ "${PODLAZ_E2E_GUEST_SUITE}" == resolute ]] || return 0
+
+  guest_exec /bin/bash -lc "systemd --version | head -n1 | grep -E '^systemd 259( |$)' >/dev/null"
+  record_evidence resolved.systemd259 pass
+
+  guest_exec /bin/bash -lc "resolvectl status podlaz0 --no-pager >'${GUEST_PRIVATE}/resolved-status.txt'"
+  guest_exec grep -Eq '^[[:space:]]*Default Route:[[:space:]]+yes[[:space:]]*$' "${GUEST_PRIVATE}/resolved-status.txt"
+  record_evidence resolved.default_route_field pass
+
+  run_guest_user /usr/bin/podlaz status >"${PRIVATE_ROOT}/systemd259-status-1.stdout" 2>"${PRIVATE_ROOT}/systemd259-status-1.stderr"
+  grep -Fx 'Status: Connected' "${PRIVATE_ROOT}/systemd259-status-1.stdout" >/dev/null
+  grep -Fx 'Protection: Active' "${PRIVATE_ROOT}/systemd259-status-1.stdout" >/dev/null
+  run_guest_user /usr/bin/podlaz status >"${PRIVATE_ROOT}/systemd259-status-2.stdout" 2>"${PRIVATE_ROOT}/systemd259-status-2.stderr"
+  grep -Fx 'Status: Connected' "${PRIVATE_ROOT}/systemd259-status-2.stdout" >/dev/null
+  grep -Fx 'Protection: Active' "${PRIVATE_ROOT}/systemd259-status-2.stdout" >/dev/null
+  record_evidence resolved.active_status pass
+
+  run_guest_user /usr/bin/podlaz debug recover --json >"${PRIVATE_ROOT}/systemd259-active-recover.json" 2>"${PRIVATE_ROOT}/systemd259-active-recover.stderr"
+  (
+    source "${SCRIPT_DIR}/lib/recovery_json.sh"
+    assert_clean_recovery_json_file "${PRIVATE_ROOT}/systemd259-active-recover.json"
+  )
+  record_evidence resolved.active_recovery pass
+}
+
+qualify_systemd259_inactive_resolved() {
+  [[ "${PODLAZ_E2E_GUEST_SUITE}" == resolute ]] || return 0
+
+  run_guest_user /usr/bin/podlaz status >"${PRIVATE_ROOT}/systemd259-inactive-status.stdout" 2>"${PRIVATE_ROOT}/systemd259-inactive-status.stderr"
+  grep -Fx 'Status: Disconnected' "${PRIVATE_ROOT}/systemd259-inactive-status.stdout" >/dev/null
+  record_evidence resolved.inactive_status pass
+}
+
+qualify_systemd259_reconnect() {
+  [[ "${PODLAZ_E2E_GUEST_SUITE}" == resolute ]] || return 0
+
+  run_guest_user /usr/bin/podlaz connect >"${PRIVATE_ROOT}/systemd259-reconnect.stdout" 2>"${PRIVATE_ROOT}/systemd259-reconnect.stderr"
+  wait_guest_status verified-active 120
+  run_guest_user /usr/bin/podlaz status >"${PRIVATE_ROOT}/systemd259-reconnect-status.stdout" 2>"${PRIVATE_ROOT}/systemd259-reconnect-status.stderr"
+  grep -Fx 'Status: Connected' "${PRIVATE_ROOT}/systemd259-reconnect-status.stdout" >/dev/null
+  grep -Fx 'Protection: Active' "${PRIVATE_ROOT}/systemd259-reconnect-status.stdout" >/dev/null
+  guest_exec /bin/bash -lc "resolvectl status podlaz0 --no-pager | grep -Eq '^[[:space:]]*Default Route:[[:space:]]+yes[[:space:]]*$'"
+  run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/systemd259-final-disconnect.stdout" 2>"${PRIVATE_ROOT}/systemd259-final-disconnect.stderr"
+  wait_guest_status clean-inactive 80
+  assert_terminal_authority_clean
+  assert_guest_network_baseline_restored
+  record_evidence resolved.reconnect pass
+}
+
 assert_terminal_authority_clean() {
   guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent terminal '${HOSTED_NETWORK_AUTHORITY_HELPER}' '${GUEST_MANIFEST}'"
   guest_exec test ! -e /run/podlaz/network-session-continuation.json
@@ -1311,6 +1362,7 @@ run_scenario() {
   mark_failure diagnostic_unknown tun.authority
   assert_verified_active_authority
   record_evidence tun.verified_active pass
+  qualify_systemd259_active_resolved
   hosted_control_pause verified-active
 
   if [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" == true ]]; then
@@ -1325,6 +1377,7 @@ run_scenario() {
     mark_failure diagnostic_unknown tun.disconnect
     run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr"
     wait_guest_status clean-inactive 80
+    qualify_systemd259_inactive_resolved
     record_evidence tun.clean_disconnect pass
   fi
 
@@ -1342,6 +1395,7 @@ run_scenario() {
   mark_failure diagnostic_unknown tun.recovery
   run_clean_recovery
   record_evidence tun.recovery_clean pass
+  qualify_systemd259_reconnect
   FAILURE_CLASS=none
   FAILURE_STEP=none
 }
