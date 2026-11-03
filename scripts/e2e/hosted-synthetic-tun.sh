@@ -1243,7 +1243,10 @@ assert_opt_in_nm_fd_broker() {
   nm_broker_guest_check unit-inactive /bin/bash -lc '! systemctl is-active --quiet podlaz-nm-fd-broker.service'
   nm_broker_guest_check unit-start systemctl start podlaz-nm-fd-broker.service
   nm_broker_guest_check unit-active systemctl is-active --quiet podlaz-nm-fd-broker.service
-  nm_broker_guest_check socket-created test -S /run/podlaz-nm-fd/broker.sock
+  # Type=simple reports active before the listener is bound. Wait for the
+  # actual broker socket instead of treating systemd activation as readiness.
+  # shellcheck disable=SC2016
+  nm_broker_guest_check socket-created /bin/bash -lc 'for i in $(seq 1 50); do test -S /run/podlaz-nm-fd/broker.sock && exit 0; systemctl is-active --quiet podlaz-nm-fd-broker.service || exit 1; sleep 0.1; done; exit 1'
   nm_broker_guest_check ordinary-user-denial runuser -u e2e -- python3 /workspace/scripts/e2e/nm_fd_broker_guest_smoke.py
   nm_broker_guest_check no-generation test ! -e /run/podlaz/nm-owned-generation.json
   nm_broker_guest_check unit-stop systemctl stop podlaz-nm-fd-broker.service
