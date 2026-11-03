@@ -1222,22 +1222,33 @@ run_clean_recovery() {
   guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/recovery_json.sh && assert_clean_recovery_json_file '${GUEST_PRIVATE}/recover.json'"
 }
 
+nm_broker_guest_check() {
+  local phase="$1"
+  shift
+  if ! guest_exec "$@"; then
+    # Fixed-schema failure checkpoint only; no guest journal, config or
+    # network inventory may reach public CI logs.
+    printf 'nm-broker-smoke-failure-step=%s\n' "${phase}" >&2
+    return 1
+  fi
+}
+
 assert_opt_in_nm_fd_broker() {
-  # This is an installed-package service boundary check inside the disposable
-  # NetworkManager guest, never on the hosted runner's real network namespace.
-  # Broker remains unstarted by default and has no user-facing Connect path.
-  # The substitution must run in the guest, not in the outer host.
+  # Installed-package boundary test in the disposable NetworkManager guest.
+  # None of these operations runs against the hosted runner's host namespace.
+  # The broker must remain static/unstarted before explicit manual activation.
+  # This substitution is intentionally evaluated by the guest shell.
   # shellcheck disable=SC2016
-  guest_exec /bin/bash -lc 'test "$(systemctl is-enabled podlaz-nm-fd-broker.service)" = static'
-  guest_exec /bin/bash -lc '! systemctl is-active --quiet podlaz-nm-fd-broker.service'
-  guest_exec systemctl start podlaz-nm-fd-broker.service
-  guest_exec systemctl is-active --quiet podlaz-nm-fd-broker.service
-  guest_exec test -S /run/podlaz-nm-fd/broker.sock
-  guest_exec runuser -u e2e -- python3 /workspace/scripts/e2e/nm_fd_broker_guest_smoke.py
-  guest_exec test ! -e /run/podlaz/nm-owned-generation.json
-  guest_exec systemctl stop podlaz-nm-fd-broker.service
-  guest_exec /bin/bash -lc 'test ! -S /run/podlaz-nm-fd/broker.sock'
-  guest_exec systemctl is-active --quiet podlazd.service
+  nm_broker_guest_check unit-static /bin/bash -lc 'test "$(systemctl is-enabled podlaz-nm-fd-broker.service)" = static'
+  nm_broker_guest_check unit-inactive /bin/bash -lc '! systemctl is-active --quiet podlaz-nm-fd-broker.service'
+  nm_broker_guest_check unit-start systemctl start podlaz-nm-fd-broker.service
+  nm_broker_guest_check unit-active systemctl is-active --quiet podlaz-nm-fd-broker.service
+  nm_broker_guest_check socket-created test -S /run/podlaz-nm-fd/broker.sock
+  nm_broker_guest_check ordinary-user-denial runuser -u e2e -- python3 /workspace/scripts/e2e/nm_fd_broker_guest_smoke.py
+  nm_broker_guest_check no-generation test ! -e /run/podlaz/nm-owned-generation.json
+  nm_broker_guest_check unit-stop systemctl stop podlaz-nm-fd-broker.service
+  nm_broker_guest_check socket-removed /bin/bash -lc 'test ! -S /run/podlaz-nm-fd/broker.sock'
+  nm_broker_guest_check default-daemon-intact systemctl is-active --quiet podlazd.service
   printf 'nm-broker-optin-smoke=pass\n'
 }
 
