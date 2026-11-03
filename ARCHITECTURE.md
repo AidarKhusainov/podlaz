@@ -125,7 +125,7 @@ default route and metric, DNS and IPv6 default routing against durable intent.
 A staged, intentionally uncalled NM Xray generation supervisor consumes the exact
 persisted L3 intent, current read-only L3/Privacy Envelope verification and
 kernel/NM identity before making the one-shot generation reservation. It
-requires a pre-existing empty, delegated cgroup v2 and uses atomic
+requires proof that the final unprivileged Xray UID/GID can read the generated config and traverse each parent directory **before** the generation reservation, repeats that proof before child privilege drop, and requires a pre-existing empty, delegated cgroup v2 and uses atomic
 clone-into-cgroup placement for the official NM Xray binary with the inherited
 TUN descriptor at FD 3 and a dedicated unprivileged identity. Its terminal
 path kills the entire cgroup and checks its populated state; inability to
