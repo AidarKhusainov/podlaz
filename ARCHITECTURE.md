@@ -122,6 +122,21 @@ inspection rechecks the exact persisted session/intent, verifies the live
 Privacy Envelope both before and after inspection, pins D-Bus properties to
 one unique NM process owner, and compares TUN mode/owner, address, main
 default route and metric, DNS and IPv6 default routing against durable intent.
+A staged, intentionally uncalled NM Xray generation supervisor consumes the exact
+persisted L3 intent, current read-only L3/Privacy Envelope verification and
+kernel/NM identity before making the one-shot generation reservation. It
+requires a pre-existing empty, delegated cgroup v2 and uses atomic
+clone-into-cgroup placement for the official NM Xray binary with the inherited
+TUN descriptor at FD 3 and a dedicated unprivileged identity. Its terminal
+path kills the entire cgroup and checks its populated state; inability to
+establish quiescence retains the deny fence. This is not proof that a trusted
+process never transferred an FD outside its cgroup, nor does it grant safe
+rollover, state removal, exact-owned NM cleanup, automatic recovery, or user
+backend activation. A full official-binary compatibility preflight is required
+before any NM/Privacy Envelope mutation, and independent disposable-guest
+traffic, crash, DNS/IPv6 leak and natural global FULL acceptance is still
+mandatory before enabling the mode.
+
 NM active state or an observed default route alone never proves Internet FULL,
 FD generation admission, supervised Xray ownership, safe cleanup or privacy
 under process churn. This code is **not wired to connect** and
