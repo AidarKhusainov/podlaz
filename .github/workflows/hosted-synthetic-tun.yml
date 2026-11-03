@@ -81,6 +81,38 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Run installed resolved recovery qualification on systemd 259
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-systemd259-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-systemd259-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          PODLAZ_E2E_GUEST_SUITE: resolute
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-synthetic-tun.sh "${DEV_DEB}"
+
+      - name: Validate systemd 259 public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-systemd259-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-systemd259-public
+          PODLAZ_E2E_GUEST_SUITE: resolute
+        run: bash scripts/e2e/hosted-synthetic-tun.sh validate-report
+
+      - name: Remove private systemd 259 qualification state
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-hosted-systemd259-private"
+
+      - name: Upload systemd 259 public evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: podlaz-hosted-systemd259-resolved
+          path: ${{ runner.temp }}/podlaz-hosted-systemd259-public/hosted-synthetic-tun.txt
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Run hosted Hysteria2 full-TUN qualification
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-hysteria2-private
