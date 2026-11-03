@@ -80,3 +80,34 @@ func TestNMRestrictedConfigRejectsUntraversableParentAndSymlinks(t *testing.T) {
 		t.Fatal("symlinked config admitted")
 	}
 }
+
+func TestNMRestrictedConfigUsesDedicatedGroupWithoutSupplementaryGroups(t *testing.T) {
+	if os.Getgid() == 0 {
+		t.Skip("test requires a non-root primary group")
+	}
+	dir, err := os.MkdirTemp("", "nm-xray-group-access-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if err := os.Chmod(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "xray.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	childUID, childGID := os.Getuid()+1, os.Getgid()
+	if err := verifyNMXrayConfigChildAccess(path, childUID, childGID); err != nil {
+		t.Fatalf("group-readable runtime config refused: %v", err)
+	}
+	if err := verifyNMXrayConfigChildAccess(path, childUID, childGID+1); err == nil {
+		t.Fatal("identity without owning group admitted")
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyNMXrayConfigChildAccess(path, childUID, childGID); err == nil {
+		t.Fatal("removed group traverse access was ignored")
+	}
+}
