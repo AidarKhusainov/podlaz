@@ -32,7 +32,8 @@ type nmConfinedXrayGeneration struct {
 
 // Run is intentionally one-shot. An admitted generation retains its durable
 // deny fence even after a clean exit. There is no implicit rollover/recovery.
-// The caller owns fd, config and the dedicated delegated cgroup. It must keep
+// Run consumes the broker's FD on privileged admission, including failures.
+// The caller owns config and the dedicated delegated cgroup. It must keep
 // the Privacy Envelope armed until exact-owned cleanup is independently proven.
 func (s nmConfinedXrayGeneration) Run(
 	ctx context.Context, fd *os.File, kernel nmTunFDKernelIdentity,
@@ -45,6 +46,9 @@ func (s nmConfinedXrayGeneration) Run(
 	if os.Geteuid() != 0 {
 		return errors.New("NM TUN FD admission requires privileged broker")
 	}
+	// A single generation owns the broker's descriptor. Never keep a copy in
+	// podlazd after admitting the child, even if a later check fails.
+	defer fd.Close()
 	if err := validateNMXrayBinaryAndConfig(configPath); err != nil {
 		return err
 	}
@@ -122,6 +126,17 @@ func (s nmConfinedXrayGeneration) Run(
 	}
 	waited := make(chan error, 1)
 	go func() { waited <- cmd.Wait() }()
+	// Start has duplicated ExtraFiles into the child. Immediately close the
+	// broker copy: cohort quiescence cannot prove FD shutdown if podlazd
+	// itself retains another open file description.
+	if err := fd.Close(); err != nil {
+		_ = killNMGenerationCgroup(cgroup)
+		select {
+		case <-waited:
+		case <-time.After(5 * time.Second):
+		}
+		return fmt.Errorf("NM TUN broker FD release cannot be proven: %w", err)
+	}
 	var processErr error
 	select {
 	case processErr = <-waited:
