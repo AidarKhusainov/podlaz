@@ -41,11 +41,11 @@ func TestProductionDNSOwnershipChangePreservesForeignStateAfterExactRollback(t *
 	t.Setenv(e2eTunHookPhaseEnv, "")
 
 	tests := []struct {
-		name                string
-		observations        []string
-		wantUnknown         bool
-		wantDNSRevert       int
-		wantStatusReads     int
+		name            string
+		observations    []string
+		wantUnknown     bool
+		wantDNSRevert   int
+		wantStatusReads int
 	}{
 		{
 			name:            "foreign default owner appears during route apply",
@@ -75,7 +75,7 @@ func TestProductionDNSOwnershipChangePreservesForeignStateAfterExactRollback(t *
 			runtimeDir := t.TempDir()
 			runner := &resolvedOwnershipChangeRunner{
 				productionTunCommandRunner: newProductionTunCommandRunner(productionResolvedInactiveScopeForTest),
-				observations:             tt.observations,
+				observations:               tt.observations,
 			}
 			executor := newProductionTunPlanExecutor(runner)
 			plan := productionDNSPlanForTest()
