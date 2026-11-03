@@ -3,8 +3,8 @@
 package daemon
 
 import (
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
