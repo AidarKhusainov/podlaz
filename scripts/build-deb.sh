@@ -80,6 +80,10 @@ if ! command -v go >/dev/null 2>&1; then
   exit 2
 fi
 
+# A toolchain directive is a preference, not enforcement under GOTOOLCHAIN=local.
+# Refuse a vulnerable compiler before touching any candidate package contents.
+bash scripts/ci/require-patched-go.sh
+
 if ! command -v gzip >/dev/null 2>&1; then
   echo "gzip is required to prepare compressed manual pages" >&2
   exit 2
@@ -126,6 +130,8 @@ bash scripts/package-runtime-helpers.sh "${root_dir}" "${arch}" "${goarch}"
 cat > "${root_dir}/usr/share/lintian/overrides/podlaz" <<'EOF'
 podlaz: statically-linked-binary usr/lib/podlaz/xray
 podlaz: unstripped-binary-or-object usr/lib/podlaz/xray
+podlaz: statically-linked-binary usr/lib/podlaz/xray-nm-owned
+podlaz: unstripped-binary-or-object usr/lib/podlaz/xray-nm-owned
 EOF
 chmod 0644 "${root_dir}/usr/share/lintian/overrides/podlaz"
 

@@ -36,7 +36,9 @@ test -x /usr/bin/podlaz
 test -x /usr/bin/plz
 test -x /usr/bin/podlazd
 test -x /usr/lib/podlaz/xray
+test -x /usr/lib/podlaz/xray-nm-owned
 test -s /usr/share/doc/podlaz/third-party/xray-LICENSE
+test -s /usr/share/doc/podlaz/third-party/xray-nm-owned-LICENSE
 test -f /usr/lib/systemd/system/podlazd.service
 grep -Fx 'Environment=PODLAZ_SERVICE=systemd' /usr/lib/systemd/system/podlazd.service
 grep -Fx 'Environment=PODLAZ_POLKIT_AUTHORIZATION=required' /usr/lib/systemd/system/podlazd.service
@@ -124,5 +126,6 @@ test ! -e /usr/bin/podlaz
 test ! -e /usr/bin/plz
 test ! -e /usr/bin/podlazd
 test ! -e /usr/lib/podlaz/xray
+test ! -e /usr/lib/podlaz/xray-nm-owned
 test ! -e /usr/lib/systemd/system/podlazd.service
 test ! -e /usr/lib/sysusers.d/podlaz.conf

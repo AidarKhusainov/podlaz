@@ -58,7 +58,7 @@ jobs:
 
       - name: Upload workflow lint diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-workflow-lint-diagnostics
           path: /tmp/podlaz-workflow-lint.txt
@@ -91,7 +91,7 @@ jobs:
 
       - name: Upload Go diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-go-diagnostics
           path: /tmp/podlaz-go-core.txt
@@ -113,6 +113,66 @@ jobs:
 
       - name: CLI behavior contract
         run: bash scripts/e2e/cli-contract.sh
+
+  vulnerable-go-rejection:
+    name: Reject vulnerable local Go release candidates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # Deliberately install vulnerable Go for a negative test ONLY.
+      # No product binary or package is permitted to leave this job.
+      - name: Setup vulnerable Go test fixture
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26.9'
+          cache: false
+
+      - name: Prove GOTOOLCHAIN=local cannot produce release candidates
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = go1.26.9
+
+          if bash scripts/ci/require-patched-go.sh >"${RUNNER_TEMP}/go-rejection.log" 2>&1; then
+            echo 'vulnerable local compiler passed the security gate' >&2
+            exit 1
+          fi
+          grep -F 'requires a patched Go toolchain' "${RUNNER_TEMP}/go-rejection.log"
+
+          if bash scripts/build-deb.sh >"${RUNNER_TEMP}/deb-rejection.log" 2>&1; then
+            echo 'vulnerable local compiler produced a Debian candidate' >&2
+            exit 1
+          fi
+          grep -F 'requires a patched Go toolchain' "${RUNNER_TEMP}/deb-rejection.log"
+          test ! -e dist/package-root/usr/bin/podlaz
+          test ! -e dist/package-root/usr/bin/podlazd
+          test ! -e dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+
+          # Independently reject a prebuilt vulnerable binary even when the
+          # release archiver runs with another compiler.
+          fixture="$(mktemp -d)"
+          trap 'rm -rf "${fixture}"' EXIT
+          printf 'package main\nfunc main() {}\n' > "${fixture}/main.go"
+          GOWORK=off GO111MODULE=off go build -o "${fixture}/vulnerable" "${fixture}/main.go"
+          test "$(go version -m "${fixture}/vulnerable" | awk 'NR==1 {print $2}')" = go1.26.9
+
+          for root in dist/package-root dist-arm64/package-root; do
+            install -D -m 0755 "${fixture}/vulnerable" "${root}/usr/bin/podlaz"
+            install -D -m 0755 "${fixture}/vulnerable" "${root}/usr/bin/podlazd"
+          done
+          if VERSION=0.2.47+pr.security bash scripts/ci/create-release-artifacts.sh >"${RUNNER_TEMP}/archive-rejection.log" 2>&1; then
+            echo 'release archiver accepted vulnerable binaries' >&2
+            exit 1
+          fi
+          grep -F 'requires a patched Go toolchain' "${RUNNER_TEMP}/archive-rejection.log"
+          test ! -e dist/release/podlaz_0.2.47+pr.security_linux_amd64.tar.gz
+          test ! -e dist/release/podlaz_0.2.47+pr.security_linux_amd64.deb
 
   real-nftables:
     name: Real nftables ownership contract
@@ -183,7 +243,7 @@ jobs:
 
       - name: Upload package build diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-build-deb-diagnostics
           path: |
@@ -209,7 +269,7 @@ jobs:
 
       - name: Upload package validation diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-package-validation-diagnostics
           path: |
@@ -233,7 +293,7 @@ jobs:
 
       - name: Upload package install diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: podlaz-package-install-diagnostics
           path: /tmp/podlaz-package-install.txt

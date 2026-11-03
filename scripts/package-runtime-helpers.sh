@@ -83,3 +83,46 @@ install -m 0644 "${xray_license}" "${third_party_doc_dir}/xray-LICENSE"
 
 test -x "${runtime_lib_dir}/xray"
 test -s "${third_party_doc_dir}/xray-LICENSE"
+
+# Stage the upstream inherited-FD binary separately; podlazd never selects it.
+nm_xray_asset=""
+nm_xray_sha256=""
+case "${deb_arch}" in
+  amd64)
+    nm_xray_asset="${XRAY_NM_AMD64_ASSET}"
+    nm_xray_sha256="${XRAY_NM_AMD64_SHA256}"
+    ;;
+  arm64)
+    nm_xray_asset="${XRAY_NM_ARM64_ASSET}"
+    nm_xray_sha256="${XRAY_NM_ARM64_SHA256}"
+    ;;
+esac
+# Different releases reuse asset names. Cache by version to prevent aliasing.
+nm_cache_dir="${runtime_cache_dir}/nm-owned/${XRAY_NM_VERSION}"
+nm_archive="${nm_cache_dir}/${nm_xray_asset}"
+mkdir -p "${nm_cache_dir}"
+if [ ! -f "${nm_archive}" ]; then
+  curl --fail --location --proto '=https' --tlsv1.2 --show-error \
+    --output "${nm_archive}" \
+    "https://github.com/XTLS/Xray-core/releases/download/${XRAY_NM_VERSION}/${nm_xray_asset}"
+fi
+printf '%s  %s\n' "${nm_xray_sha256}" "${nm_archive}" | sha256sum --check --status
+
+nm_extract_dir="${xray_tmp}/nm-owned"
+mkdir -p "${nm_extract_dir}"
+unzip -q "${nm_archive}" -d "${nm_extract_dir}"
+nm_xray_binary="$(find "${nm_extract_dir}" -maxdepth 2 -type f -name xray | head -n 1)"
+if [ -z "${nm_xray_binary}" ]; then
+  echo "NM Xray binary missing from verified archive" >&2
+  exit 1
+fi
+install -m 0755 "${nm_xray_binary}" "${runtime_lib_dir}/xray-nm-owned"
+
+nm_xray_license="$(find "${nm_extract_dir}" -maxdepth 2 -type f \( -name LICENSE -o -name LICENSE.txt -o -name COPYING \) | head -n 1)"
+if [ -z "${nm_xray_license}" ]; then
+  echo "NM Xray license missing from verified archive" >&2
+  exit 1
+fi
+install -m 0644 "${nm_xray_license}" "${third_party_doc_dir}/xray-nm-owned-LICENSE"
+test -x "${runtime_lib_dir}/xray-nm-owned"
+test -s "${third_party_doc_dir}/xray-nm-owned-LICENSE"

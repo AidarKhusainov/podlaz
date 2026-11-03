@@ -63,6 +63,8 @@ func TestHostedVMBootAuthorityFailureDiagnosticsAreReadOnlyAndBounded(t *testing
 		"boot-restart-diagnostic.socket=",
 		"boot-restart-diagnostic.continuation=",
 		"boot-restart-diagnostic.api=",
+		"boot-restart-diagnostic.dns_scope_cause=",
+		"diagnose-dns-scope-cause",
 		"--max-time 5",
 		"--output /dev/null",
 	} {

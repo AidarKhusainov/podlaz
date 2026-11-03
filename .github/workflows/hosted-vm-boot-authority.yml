@@ -67,7 +67,7 @@ jobs:
         run: rm -rf "${E2E_TMP_ROOT}"
       - name: Upload public qualification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v4
         with:
           name: podlaz-hosted-vm-boot-authority
           path: ${{ runner.temp }}/podlaz-hosted-vm-boot-authority-public/hosted-vm-boot-authority.txt

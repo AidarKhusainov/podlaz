@@ -259,3 +259,33 @@ func runDaemonStatusDiagnosis(t *testing.T, statusPath string, diagnosticPath ..
 	}
 	return strings.TrimSpace(string(out))
 }
+
+func TestDaemonStatusSemanticsBoundedDNSScopeFailureEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		record map[string]any
+		want   string
+	}{
+		{"valid", map[string]any{"schema_version": "podlaz.network-session-resume-diagnostic.v1",
+			"owner": "podlaz", "current": map[string]any{
+				"tun_failure_phase": "resolved-link-query-verify", "dns_failure_cause": "no-ipv4"}}, "no-ipv4"},
+		{"untrusted", map[string]any{"schema_version": "podlaz.network-session-resume-diagnostic.v1",
+			"owner": "podlaz", "current": map[string]any{
+				"tun_failure_phase": "resolved-link-query-verify", "dns_failure_cause": "raw.example.com"}}, "unknown"},
+		{"wrong-phase", map[string]any{"schema_version": "podlaz.network-session-resume-diagnostic.v1",
+			"owner": "podlaz", "current": map[string]any{
+				"tun_failure_phase": "network-apply", "dns_failure_cause": "no-ipv4"}}, "unknown"},
+		{"bad-owner", map[string]any{"schema_version": "podlaz.network-session-resume-diagnostic.v1",
+			"owner": "foreign", "current": map[string]any{
+				"tun_failure_phase": "resolved-link-query-verify", "dns_failure_cause": "no-ipv4"}}, "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeDaemonStatusFixture(t, tc.record)
+			out, err := exec.Command("python3", filepath.Join("lib", "daemon_status_semantics.py"),
+				"diagnose-dns-scope-cause", path).CombinedOutput()
+			if err != nil || strings.TrimSpace(string(out)) != tc.want {
+				t.Fatalf("classified scope cause=%q, want %q: %v", out, tc.want, err)
+			}
+		})
+	}
+}

@@ -13,6 +13,8 @@ fi
 
 # shellcheck source=scripts/ci/package-obsolete-tun-gate.sh
 source scripts/ci/package-obsolete-tun-gate.sh
+# shellcheck source=packaging/runtime-helpers.env
+source packaging/runtime-helpers.env
 
 assert_no_match() {
   local pattern="$1"
@@ -106,16 +108,21 @@ validate_bash_completion_protocol_boundary() {
 run_native_packaged_xray_schema_test() {
   local package="$1"
   local arch="$2"
+  local runtime_name="$3"
   local host_arch
   host_arch="$(dpkg --print-architecture)"
   if [ "${arch}" != "${host_arch}" ]; then
-    echo "Skipping packaged Xray config test for ${arch} on ${host_arch} host"
+    echo "Skipping packaged ${runtime_name} config test for ${arch} on ${host_arch} host"
     return 0
   fi
-  local xray="/tmp/podlaz-${arch}-packaged-xray-schema-test"
-  dpkg-deb --fsys-tarfile "${package}" | tar -xOf - ./usr/lib/podlaz/xray > "${xray}"
+  local xray="/tmp/podlaz-${arch}-packaged-${runtime_name}-schema-test"
+  dpkg-deb --fsys-tarfile "${package}" | tar -xOf - "./usr/lib/podlaz/${runtime_name}" > "${xray}"
   chmod 0755 "${xray}"
-  PODLAZ_PACKAGED_XRAY_PATH="${xray}" go test ./internal/daemon -run '^TestPackagedXrayAcceptsPinnedTunConfigs$' -count=1
+  local test_name="TestPackagedXrayAcceptsPinnedTunConfigs"
+  if [ "${runtime_name}" = "xray-nm-owned" ]; then
+    test_name="TestPackagedNMOwnedXraySecurityBoundary"
+  fi
+  PODLAZ_PACKAGED_XRAY_PATH="${xray}" go test ./internal/daemon -run "^${test_name}$" -count=1
 }
 
 for package in "$@"; do
@@ -156,6 +163,7 @@ for package in "$@"; do
   grep -F './usr/bin/podlazd' "${contents}"
   grep -F './usr/lib/podlaz/' "${contents}"
   grep -F './usr/lib/podlaz/xray' "${contents}"
+  grep -F './usr/lib/podlaz/xray-nm-owned' "${contents}"
   grep -F './usr/lib/systemd/system/podlazd.service' "${contents}"
   grep -F './usr/lib/sysusers.d/podlaz.conf' "${contents}"
   grep -F './usr/share/bash-completion/completions/podlaz' "${contents}"
@@ -168,6 +176,7 @@ for package in "$@"; do
   grep -F './usr/share/man/man1/podlaz.1.gz' "${contents}"
   grep -F './usr/share/man/man8/podlazd.8.gz' "${contents}"
   grep -F './usr/share/doc/podlaz/third-party/xray-LICENSE' "${contents}"
+  grep -F './usr/share/doc/podlaz/third-party/xray-nm-owned-LICENSE' "${contents}"
   assert_no_fixed_match './usr/share/metainfo/' "${contents}"
   assert_no_fixed_match './usr/share/applications/' "${contents}"
   assert_no_fixed_match './usr/share/icons/' "${contents}"
@@ -184,7 +193,13 @@ for package in "$@"; do
   validate_binary_architecture "${package}" "${arch}" podlazd
   validate_elf_architecture "${package}" "${arch}" "/usr/lib/podlaz/xray" "xray"
   validate_executable_mode "${package}" "/usr/lib/podlaz/xray"
-  run_native_packaged_xray_schema_test "${package}" "${arch}"
+  validate_elf_architecture "${package}" "${arch}" "/usr/lib/podlaz/xray-nm-owned" "xray-nm-owned"
+  validate_executable_mode "${package}" "/usr/lib/podlaz/xray-nm-owned"
+  run_native_packaged_xray_schema_test "${package}" "${arch}" "xray"
+  run_native_packaged_xray_schema_test "${package}" "${arch}" "xray-nm-owned"
+  if [ "${arch}" = "$(dpkg --print-architecture)" ]; then
+    "${extracted_root}/usr/lib/podlaz/xray-nm-owned" version | grep -F "Xray ${XRAY_NM_VERSION#v} "
+  fi
 
   dpkg-deb --fsys-tarfile "${package}" | tar -xOf - ./usr/lib/systemd/system/podlazd.service > "${service}"
   dpkg-deb --fsys-tarfile "${package}" | tar -xOf - ./usr/lib/sysusers.d/podlaz.conf > "${sysusers}"
@@ -226,7 +241,7 @@ if grep -R -E '(^|[^[:alnum:]_])systemctl[[:space:]]+(start|enable)([[:space:]]|
 fi
 
 if [ -n "${PODLAZ_LINKAGE_ROOT:-}" ]; then
-  file "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlaz" "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlazd" "${PODLAZ_LINKAGE_ROOT}/usr/lib/podlaz/xray"
+  file "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlaz" "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlazd" "${PODLAZ_LINKAGE_ROOT}/usr/lib/podlaz/xray" "${PODLAZ_LINKAGE_ROOT}/usr/lib/podlaz/xray-nm-owned"
   ldd "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlaz"
   ldd "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlazd"
   ldd "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlaz" | grep -F 'libc.so.6'
