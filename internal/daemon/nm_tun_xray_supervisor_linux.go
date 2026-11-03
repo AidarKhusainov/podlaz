@@ -150,7 +150,7 @@ func (s nmConfinedXrayGeneration) Run(
 	if processErr != nil {
 		return fmt.Errorf("official NM Xray generation exited: %w", processErr)
 	}
-	return nil
+	return errors.New("official NM Xray generation exited unexpectedly; protected session is no longer connected")
 }
 
 func validateNMXrayBinaryAndConfig(configPath string) error {
