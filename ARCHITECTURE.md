@@ -156,11 +156,19 @@ keeps the durable generation reservation and Privacy Envelope armed.
 
 This service is a **broker transport and confinement increment**, not a
 working user-facing NM connect. No production connect path starts the
-separately scoped broker, and #476 config composition and #477 official
-pinned Xray packaging/preflight are still separate unmerged changes.
-The official binary's full generated config must pass an early
-compatibility preflight **before** any NM/L3/DNS, route or firewall
-mutation; this must not be inferred from the broker's later checks.
+separately scoped broker. The branch now contains the pinned unmodified
+official Xray runtime, typed/native NM config generator, and two-phase
+compatibility boundary incorporated from the previously separate #476/#477
+sources. In phase one, `prepareNMOwnedXray` generates the complete provider
+configuration and runs the exact official Xray preflight **before any
+Privacy Envelope, NM/L3/DNS, route or firewall mutation**. The result pins
+the interface, MTU, egress mark and SHA-256 of the tested bytes. Only after
+the caller explicitly arms the fail-closed Privacy Envelope may
+`stagePreparedNMOwnedXray` invoke protected NM L3 activation; changing
+any of the preflighted fields or configuration bytes fails before NM writes.
+Neither phase grants generation cleanup, NM connectivity or a user-visible
+mode. The broker's later FD checks cannot substitute for this initial
+pre-mutation compatibility gate.
 Even an empty cgroup is not proof that a descriptor never escaped by
 `SCM_RIGHTS`, `/proc/*/fd`, or another process; Linux lacks an atomic
 NM-ifindex/generation FD admission or general revoke-all-copies primitive
