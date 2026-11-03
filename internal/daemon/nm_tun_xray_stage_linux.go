@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"hash"
 	"errors"
 	"fmt"
 
@@ -120,10 +119,6 @@ func nmXrayAuthorityDigest(config []byte, name string, mtu int, mark uint32) [32
 	binary.BigEndian.PutUint32(encoded[:4], uint32(len(config)))
 	_, _ = h.Write(encoded[:4])
 	_, _ = h.Write(config)
-	return nmXrayDigestSum(h)
-}
-
-func nmXrayDigestSum(h hash.Hash) [32]byte {
 	var result [32]byte
 	copy(result[:], h.Sum(nil))
 	return result
