@@ -55,6 +55,9 @@ EVIDENCE_KEYS=(
   foreign.churn_preserved
   foreign.recovery_preserved
   foreign.cleanup_preserved
+  foreign.default_dns_blocked
+  foreign.default_dns_preserved
+  foreign.default_dns_released
   base.terminal_cleanup
   artifact.privacy
 )
@@ -101,6 +104,9 @@ required = {
     "foreign.churn_preserved",
     "foreign.recovery_preserved",
     "foreign.cleanup_preserved",
+    "foreign.default_dns_blocked",
+    "foreign.default_dns_preserved",
+    "foreign.default_dns_released",
     "base.terminal_cleanup",
     "artifact.privacy",
 }
@@ -474,6 +480,47 @@ validate_base_control() {
   grep -Fx 'outer.cleanup=pass' "${BASE_REPORT}" >/dev/null
 }
 
+
+# Use the independently owned, real resolved link already in this disposable
+# installed-package guest. Exercise competing ~. ownership, then restore its
+# original split-DNS state without having Podlaz manage or clean it.
+qualify_foreign_default_dns_ownership() {
+  local original_domain="${FOREIGN_DNS_DOMAIN}" connect_code
+  mark_failure fixture foreign.default_dns_fixture
+  FOREIGN_DNS_DOMAIN="~."
+  guest_exec resolvectl domain "${FOREIGN_DNS_LINK}" "${FOREIGN_DNS_DOMAIN}"
+  guest_exec resolvectl default-route "${FOREIGN_DNS_LINK}" yes
+  assert_foreign_fixture
+  guest_exec /bin/bash -lc "resolvectl status '${FOREIGN_DNS_LINK}' --no-pager | grep -F 'DNS Domain: ~.' >/dev/null"
+
+  mark_failure product foreign.default_dns_blocked
+  set +e
+  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' timeout 80 /usr/bin/podlaz connect >'${FOREIGN_GUEST_PRIVATE}/default-dns-connect.stdout' 2>'${FOREIGN_GUEST_PRIVATE}/default-dns-connect.stderr'"
+  connect_code=$?
+  set -e
+  (( connect_code != 0 && connect_code != 124 )) || fail "foreign ~. was not rejected conclusively by installed Podlaz"
+  guest_exec grep -F 'Another VPN or network service controls default DNS (~.)' "${FOREIGN_GUEST_PRIVATE}/default-dns-connect.stderr" >/dev/null
+  guest_exec grep -F 'No new Podlaz VPN connection changes were applied.' "${FOREIGN_GUEST_PRIVATE}/default-dns-connect.stderr" >/dev/null
+  guest_exec /bin/bash -lc "! grep -Eiq 'HTTP 500|198[.]51[.]100[.]53|internal server error' '${FOREIGN_GUEST_PRIVATE}/default-dns-connect.stderr'"
+  guest_exec /bin/bash -lc "! ip link show dev podlaz0 >/dev/null 2>&1"
+  guest_exec /bin/bash -lc "! nft list table inet podlaz >/dev/null 2>&1"
+  guest_exec /bin/bash -lc "! find /run/podlaz/transactions -maxdepth 1 -name '*.json' -type f | grep -q ."
+  guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket /run/podlaz/podlazd.sock http://localhost/v1/status >'${FOREIGN_GUEST_PRIVATE}/default-dns-status.json'"
+  guest_exec python3 "${STATUS_HELPER}" clean-inactive "${FOREIGN_GUEST_PRIVATE}/default-dns-status.json"
+  record_evidence foreign.default_dns_blocked pass
+
+  mark_failure product foreign.default_dns_preserved
+  assert_foreign_fixture
+  record_evidence foreign.default_dns_preserved pass
+
+  mark_failure fixture foreign.default_dns_released
+  guest_exec resolvectl domain "${FOREIGN_DNS_LINK}" "${original_domain}"
+  guest_exec resolvectl default-route "${FOREIGN_DNS_LINK}" no
+  FOREIGN_DNS_DOMAIN="${original_domain}"
+  assert_foreign_fixture
+  record_evidence foreign.default_dns_released pass
+}
+
 run_scenario() {
   local candidate="$1"
 
@@ -487,6 +534,7 @@ run_scenario() {
   guest_exec install -d -m 0700 "${FOREIGN_GUEST_PRIVATE}"
   create_foreign_fixture || fail "could not create comprehensive foreign network fixture"
   assert_foreign_fixture || fail "foreign fixture is not exact before connect"
+  qualify_foreign_default_dns_ownership || fail "installed-package foreign default DNS ownership qualification failed"
 
   mark_failure diagnostic_unknown base.connect
   release_control candidate-ready || fail "could not release candidate-ready boundary"
