@@ -5,8 +5,8 @@ package daemon
 import (
 	"fmt"
 	"testing"
-
 )
+
 func TestNMGenerationBrokerRequiresEveryCapabilityBeforeAdmission(t *testing.T) {
 	var full [2]uint32
 	for _, capability := range nmBrokerRequiredCapabilities {
