@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 
@@ -11,58 +12,92 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
-// stageNMOwnedXray prepares an NM-owned TUN data plane but does not activate
-// the user-facing NM backend. It is a single semantic boundary: the pinned
-// official Xray -test MUST succeed on the complete generated native/provider
-// config before the first NetworkManager L3 or firewall mutation.
-// The caller must already have established an armed protected Network Session.
-func (s nmL3Stager) stageNMOwnedXray(
-	ctx context.Context, p profile.Profile, sessionID string, mark uint32,
-	opts engine.XrayTunConfigOptions, plan nmL3Plan,
-) ([]byte, nmL3Intent, error) {
-	return stageNMOwnedXrayWith(ctx, p, sessionID, mark, opts, plan,
-		engine.GenerateNMOwnedXrayTunConfig,
-		preflightNMOwnedXrayCompatibility,
-		s.StageProtected)
+// nmOwnedXrayPrepared contains the fully composed and official-binary-tested
+// configuration. The first phase has no network/Privacy Envelope side effects.
+// A digest and exact interface/MTU/mark prevent substituting different data
+// between this read-only preflight and the later protected NM staging phase.
+type nmOwnedXrayPrepared struct {
+	config        []byte
+	digest        [32]byte
+	interfaceName string
+	mtu           int
+	mark          uint32
 }
 
-func stageNMOwnedXrayWith(
-	ctx context.Context, p profile.Profile, sessionID string, mark uint32,
-	opts engine.XrayTunConfigOptions, plan nmL3Plan,
+// prepareNMOwnedXray is the pre-mutation boundary. It MUST be invoked before
+// arming nftables, changing routes/DNS, or requesting NM activation, not only
+// before passing an inherited TUN FD. No profile heuristics replace the
+// pinned, unmodified official Xray -test over the complete generated config.
+func prepareNMOwnedXray(
+	ctx context.Context, p profile.Profile, opts engine.XrayTunConfigOptions,
+) (*nmOwnedXrayPrepared, error) {
+	return prepareNMOwnedXrayWith(ctx, p, opts,
+		engine.GenerateNMOwnedXrayTunConfig,
+		preflightNMOwnedXrayCompatibility)
+}
+
+func prepareNMOwnedXrayWith(
+	ctx context.Context, p profile.Profile, opts engine.XrayTunConfigOptions,
 	generate func(profile.Profile, engine.XrayTunConfigOptions) ([]byte, error),
 	preflight func(context.Context, []byte) error,
-	stage func(context.Context, string, uint32, nmL3Plan) (nmL3Intent, error),
+) (*nmOwnedXrayPrepared, error) {
+	if ctx == nil || generate == nil || preflight == nil ||
+		opts.Name == "" || opts.MTU <= 0 || opts.EgressMark == 0 {
+		return nil, errors.New("NM Xray pre-mutation compatibility requires exact interface, MTU and egress mark")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	generated, err := generate(p, opts)
+	if err != nil {
+		return nil, err
+	}
+	if len(generated) == 0 {
+		return nil, errors.New("NM Xray generator returned empty config")
+	}
+	if err := preflight(ctx, generated); err != nil {
+		return nil, fmt.Errorf("official NM Xray compatibility check failed before any network mutation: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	config := append([]byte(nil), generated...)
+	return &nmOwnedXrayPrepared{
+		config: config, digest: sha256.Sum256(config),
+		interfaceName: opts.Name, mtu: opts.MTU, mark: opts.EgressMark,
+	}, nil
+}
+
+// stagePreparedNMOwnedXray may be invoked only after the normal protected
+// Network Session has armed its exact marked Privacy Envelope. It never
+// retries a failed D-Bus operation or interprets observations as cleanup
+// authority. It retains partially persisted NM intent on ambiguous failure.
+func (s nmL3Stager) stagePreparedNMOwnedXray(
+	ctx context.Context, proof *nmOwnedXrayPrepared, sessionID string, plan nmL3Plan,
 ) ([]byte, nmL3Intent, error) {
-	if ctx == nil || generate == nil || preflight == nil || stage == nil ||
-		mark == 0 || !networkSessionIDPattern.MatchString(sessionID) ||
-		opts.Name != plan.Interface || opts.MTU != int(plan.MTU) ||
-		opts.EgressMark != mark {
-		return nil, nmL3Intent{}, errors.New("NM Xray config and L3 plan have inconsistent admission authority")
+	return stagePreparedNMOwnedXrayWith(ctx, proof, sessionID, plan, s.StageProtected)
+}
+
+func stagePreparedNMOwnedXrayWith(
+	ctx context.Context, proof *nmOwnedXrayPrepared, sessionID string,
+	plan nmL3Plan, stage func(context.Context, string, uint32, nmL3Plan) (nmL3Intent, error),
+) ([]byte, nmL3Intent, error) {
+	if ctx == nil || proof == nil || stage == nil ||
+		!networkSessionIDPattern.MatchString(sessionID) ||
+		proof.interfaceName != plan.Interface || proof.mtu != int(plan.MTU) ||
+		proof.mark == 0 || len(proof.config) == 0 ||
+		sha256.Sum256(proof.config) != proof.digest {
+		return nil, nmL3Intent{}, errors.New("NM Xray preflight proof changed or has inconsistent L3 authority")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nmL3Intent{}, err
 	}
 	if err := validateNML3Plan(plan); err != nil {
-		return nil, nmL3Intent{}, fmt.Errorf("invalid protected NM plan: %w", err)
+		return nil, nmL3Intent{}, fmt.Errorf("invalid protected NM L3 plan: %w", err)
 	}
-	generated, err := generate(p, opts)
+	intent, err := stage(ctx, sessionID, proof.mark, plan)
 	if err != nil {
-		return nil, nmL3Intent{}, err
-	}
-	if len(generated) == 0 {
-		return nil, nmL3Intent{}, errors.New("NM Xray generator returned empty config")
-	}
-	if err := preflight(ctx, generated); err != nil {
-		return nil, nmL3Intent{}, fmt.Errorf("official NM Xray compatibility check failed before network mutation: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, nmL3Intent{}, err
-	}
-	intent, err := stage(ctx, sessionID, mark, plan)
-	if err != nil {
-		// Never discard exact partially persisted NM mutation authority.
-		// A timed-out D-Bus call can succeed after the caller returns.
 		return nil, intent, err
 	}
-	return generated, intent, nil
+	return append([]byte(nil), proof.config...), intent, nil
 }
