@@ -13,13 +13,13 @@ const nmBrokerTestDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 func TestNMBrokerRequestFailsClosedForMissingOrAmbiguousAuthority(t *testing.T) {
 	valid := nmBrokerGenerationRequest{
-		Schema:     nmBrokerRequestSchema,
-		SessionID:  "00112233445566778899aabbccddeeff",
-		EgressMark: 101,
-		ConfigPath: "/run/podlaz/generated/xray.json",
+		Schema:       nmBrokerRequestSchema,
+		SessionID:    "00112233445566778899aabbccddeeff",
+		EgressMark:   101,
+		ConfigPath:   "/run/podlaz/generated/xray.json",
 		ConfigSHA256: nmBrokerTestDigest,
-		Kernel:     testNMFDIdentity(),
-		NM:         validExpectedNMTun(),
+		Kernel:       testNMFDIdentity(),
+		NM:           validExpectedNMTun(),
 	}
 	data, err := json.Marshal(valid)
 	if err != nil {

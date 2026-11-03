@@ -22,13 +22,13 @@ const (
 // durable NM L3, Privacy Envelope, D-Bus and kernel FD checks before
 // reserving anything. A request's values grant no cleanup authority.
 type nmBrokerGenerationRequest struct {
-	Schema     string                `json:"schema"`
-	SessionID  string                `json:"session_id"`
-	EgressMark uint32                `json:"egress_mark"`
-	ConfigPath string                `json:"config_path"`
-	ConfigSHA256 string             `json:"config_sha256"`
-	Kernel     nmTunFDKernelIdentity `json:"kernel"`
-	NM         nmTunDBusAuthority    `json:"network_manager"`
+	Schema       string                `json:"schema"`
+	SessionID    string                `json:"session_id"`
+	EgressMark   uint32                `json:"egress_mark"`
+	ConfigPath   string                `json:"config_path"`
+	ConfigSHA256 string                `json:"config_sha256"`
+	Kernel       nmTunFDKernelIdentity `json:"kernel"`
+	NM           nmTunDBusAuthority    `json:"network_manager"`
 }
 
 func decodeNMBrokerGenerationRequest(data []byte) (nmBrokerGenerationRequest, error) {

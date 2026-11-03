@@ -134,6 +134,16 @@ capability. An invalid request or excess/absent FD is refused and all
 received descriptors are closed. The caller closes its own FD immediately
 after transfer. A separate read-only lifetime lease detects unexpected
 broker disconnect; closing the lease cancels the supervised cohort.
+The broker request is versioned and includes the lowercase SHA-256 of the
+actual generated Xray config bytes that passed the official pre-mutation
+compatibility check. The receiver validates the exact root-owned file
+contents before generation reservation and again before FD handoff; the
+restricted child repeats that content check before dropping privileges and
+exec. A mismatch fails closed and preserves any already-reserved generation.
+The request digest is not evidence that a trusted caller ran preflight; the
+caller must use the separately bound `nmOwnedXrayPrepared` result and its
+`configSHA256` method.
+
 The response `spawned` means only that the restricted child was started;
 it is **not** connectivity, Internet FULL, or permission to expose traffic.
 
