@@ -1221,7 +1221,7 @@ PY
 qualify_systemd259_active_resolved() {
   [[ "${PODLAZ_E2E_GUEST_SUITE}" == resolute ]] || return 0
 
-  guest_exec /bin/bash -lc "systemd --version | head -n1 | grep -E '^systemd 259( |$)' >/dev/null"
+  guest_exec /bin/bash -lc "systemctl --version | head -n1 | grep -E '^systemd 259( |$)' >/dev/null"
   record_evidence resolved.systemd259 pass
 
   guest_exec /bin/bash -lc "resolvectl status podlaz0 --no-pager >'${GUEST_PRIVATE}/resolved-status.txt'"
