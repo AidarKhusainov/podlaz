@@ -262,6 +262,10 @@ func (r *issue236PartialMutationRunner) Run(_ context.Context, name string, args
 	}
 
 	switch command {
+	case "resolvectl status --no-pager":
+		// The real executor now verifies current DNS ownership before the
+		// route and policy-rule mutation exercised by this fixture.
+		return netexecutor.CommandResult{Stdout: "Global\\n       Protocols: +LLMNR"}, nil
 	case "ip -details link show dev podlaz0":
 		return netexecutor.CommandResult{Stdout: productionTunLinkForTest}, nil
 	case "ip -details -o link show dev podlaz0":
