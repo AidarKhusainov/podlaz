@@ -169,7 +169,6 @@ Current DNS Server: 192.0.2.53
 			}
 		})
 	}
-	}
 
 	for _, tt := range []struct {
 		name      string
