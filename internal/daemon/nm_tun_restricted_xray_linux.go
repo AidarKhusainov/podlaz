@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"errors"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -37,6 +38,15 @@ func RunNMOwnedRestrictedXrayChild(configPath string) error {
 		ifr.Uint16()&(unix.IFF_TUN|unix.IFF_NO_PI) != unix.IFF_TUN|unix.IFF_NO_PI ||
 		ifr.Uint16()&(unix.IFF_MULTI_QUEUE|unix.IFF_TAP|unix.IFF_VNET_HDR) != 0 {
 		return errors.New("NM Xray restricted child did not receive a native single-queue TUN FD")
+	}
+	var expected nmTunFDKernelIdentity
+	encoded := os.Getenv("PODLAZ_NM_KERNEL_IDENTITY")
+	if len(encoded) == 0 || len(encoded) > 256 ||
+		json.Unmarshal([]byte(encoded), &expected) != nil {
+		return errors.New("NM Xray child lacks exact kernel generation identity")
+	}
+	if err := verifyNMOwnedTunFDKernelIdentity(3, expected); err != nil {
+		return fmt.Errorf("NM Xray child FD kernel identity changed: %w", err)
 	}
 	if err := validateNMXrayBinaryAndConfig(configPath); err != nil {
 		return err
