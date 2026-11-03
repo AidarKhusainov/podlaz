@@ -38,6 +38,14 @@ test -x /usr/bin/podlazd
 test -x /usr/lib/podlaz/xray
 test -s /usr/share/doc/podlaz/third-party/xray-LICENSE
 test -f /usr/lib/systemd/system/podlazd.service
+test -f /usr/lib/systemd/system/podlaz-nm-fd-broker.service
+grep -Fx 'Delegate=yes' /usr/lib/systemd/system/podlaz-nm-fd-broker.service
+grep -Fx 'Restart=no' /usr/lib/systemd/system/podlaz-nm-fd-broker.service
+grep -Fx 'RuntimeDirectoryMode=0700' /usr/lib/systemd/system/podlaz-nm-fd-broker.service
+if grep -Eq '^\\[Install\\]|^WantedBy=|^RequiredBy=' /usr/lib/systemd/system/podlaz-nm-fd-broker.service; then
+  echo "opt-in NM broker was accidentally configured for automatic enablement" >&2
+  exit 1
+fi
 grep -Fx 'Environment=PODLAZ_SERVICE=systemd' /usr/lib/systemd/system/podlazd.service
 grep -Fx 'Environment=PODLAZ_POLKIT_AUTHORIZATION=required' /usr/lib/systemd/system/podlazd.service
 grep -Fx 'Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray' /usr/lib/systemd/system/podlazd.service
@@ -125,4 +133,5 @@ test ! -e /usr/bin/plz
 test ! -e /usr/bin/podlazd
 test ! -e /usr/lib/podlaz/xray
 test ! -e /usr/lib/systemd/system/podlazd.service
+test ! -e /usr/lib/systemd/system/podlaz-nm-fd-broker.service
 test ! -e /usr/lib/sysusers.d/podlaz.conf
