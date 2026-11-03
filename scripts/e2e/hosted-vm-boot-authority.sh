@@ -53,6 +53,25 @@ EVIDENCE_KEYS=(
   artifact.privacy
 )
 
+configure_restart_rounds() {
+  local round key
+  ACTIVE_RESTART_ROUNDS="${PODLAZ_E2E_ACTIVE_RESTART_ROUNDS:-1}"
+  case "${ACTIVE_RESTART_ROUNDS}" in
+    1|2|3) ;;
+    *) fail "active restart rounds must be 1, 2 or 3" ;;
+  esac
+  # Default acceptance keeps its original schema. Diagnostic rounds add their
+  # own mandatory assertions: an earlier PASS cannot cover a later failure.
+  if (( ACTIVE_RESTART_ROUNDS > 1 )); then
+    EVIDENCE_KEYS+=(daemon_restart.foreign_state daemon_restart.traffic)
+    for ((round=2; round<=ACTIVE_RESTART_ROUNDS; round++)); do
+      for key in new_process attempt_unchanged session_unchanged exact_authority privacy_protected foreign_state traffic; do
+        EVIDENCE_KEYS+=("daemon_restart.round_${round}.${key}")
+      done
+    done
+  fi
+}
+
 evidence_recorded() { [[ -f "${REPORT}" ]] && grep -Eq "^$1=" "${REPORT}"; }
 record_evidence() {
   local key="$1" state="$2"
@@ -292,6 +311,14 @@ if [[ "${restart_count}" =~ ^[0-9]{1,6}$ ]]; then
 else
   printf 'boot-restart-diagnostic.restart_count=unknown\n'
 fi
+# Preserve provenance of the *first* replay failure: read only its private,
+# strict, same-boot diagnostic, never re-query DNS or publish original output.
+scope_cause="$(timeout 3 python3 /var/tmp/podlaz-hosted-vm-daemon-status-semantics.py diagnose-dns-scope-cause /run/podlaz/diagnostics/network-session-resume.json 2>/dev/null || printf unknown)"
+case "${scope_cause}" in
+  invalid-input|command-timeout|command-unavailable|command-failure|output-too-large|unexpected-stderr|link-not-matched|no-ipv4|identity-changed|unknown) ;;
+  *) scope_cause=unknown ;;
+esac
+printf 'boot-restart-diagnostic.dns_scope_cause=%s\n' "${scope_cause}"
 EOF_DIAGNOSTIC
   then
     printf 'boot-restart-diagnostic.guest-control=unavailable\n' >&2
@@ -312,10 +339,58 @@ cleanup() {
   exit "${saved}"
 }
 
+run_active_restart_round() {
+  local round="$1" boot_after="$2" generation="$3" profile_id="$4"
+  local attempt_before="$5" session_before="$6"
+  local daemon_before daemon_after attempt_after session_after restart_start_seconds
+  local evidence_prefix=daemon_restart failure_prefix=daemon.same_boot_restart
+  if (( round > 1 )); then
+    evidence_prefix="daemon_restart.round_${round}"
+    failure_prefix="daemon.same_boot_restart.round_${round}"
+  fi
+  printf 'boot-restart-experiment.round=%s\n' "${round}" >&2
+  daemon_before="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
+
+  mark_failure product "${failure_prefix}"
+  restart_start_seconds=$SECONDS
+  hosted_vm_ga_bash 'systemctl restart podlazd.service'
+  printf 'boot-restart-timing.systemctl_seconds=%s\n' "$(( SECONDS - restart_start_seconds ))" >&2
+  if ! hosted_vm_tun_wait_status verified-active 180 diagnose; then
+    boot_restart_readonly_diagnostic
+    mark_failure product "${failure_prefix}.$(daemon_restart_failure_token)"
+    return 1
+  fi
+  daemon_after="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
+  [[ -n "${daemon_after}" && "${daemon_after}" != "${daemon_before}" ]]
+  record_evidence "${evidence_prefix}.new_process" pass
+
+  attempt_after="$(attempt_sha)"
+  [[ "${attempt_after}" == "${attempt_before}" ]]
+  assert_attempt_exact "${boot_after}" "${generation}" "${profile_id}" succeeded
+  record_evidence "${evidence_prefix}.attempt_unchanged" pass
+
+  session_after="$(hosted_vm_tun_session_id)"
+  [[ "${session_after}" == "${session_before}" ]]
+  record_evidence "${evidence_prefix}.session_unchanged" pass
+
+  hosted_vm_tun_capture_exact_active_authority no
+  record_evidence "${evidence_prefix}.exact_authority" pass
+  hosted_vm_tun_assert_direct_blocked
+  record_evidence "${evidence_prefix}.privacy_protected" pass
+  hosted_vm_tun_assert_foreign_state
+
+  if (( ACTIVE_RESTART_ROUNDS > 1 )); then
+    record_evidence "${evidence_prefix}.foreign_state" pass
+    mark_failure product "${failure_prefix}.traffic"
+    hosted_vm_tun_run_traffic
+    record_evidence "${evidence_prefix}.traffic" pass
+  fi
+  printf 'boot-restart-experiment.completed_round=%s\n' "${round}" >&2
+}
+
 run_scenario() {
   local profile_id boot_before boot_after generation attempt_before session_before
-  local daemon_before daemon_after attempt_after session_after attempt_disconnected
-  local restart_start_seconds
+  local attempt_disconnected round
 
   mark_failure capability vm.acceleration
   hosted_vm_probe_acceleration
@@ -404,35 +479,11 @@ run_scenario() {
 
   attempt_before="$(attempt_sha)"
   session_before="$(hosted_vm_tun_session_id)"
-  daemon_before="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
-
-  mark_failure product daemon.same_boot_restart
-  restart_start_seconds=$SECONDS
-  hosted_vm_ga_bash 'systemctl restart podlazd.service'
-  printf 'boot-restart-timing.systemctl_seconds=%s\n' "$(( SECONDS - restart_start_seconds ))" >&2
-  if ! hosted_vm_tun_wait_status verified-active 180 diagnose; then
-    boot_restart_readonly_diagnostic
-    mark_failure product "daemon.same_boot_restart.$(daemon_restart_failure_token)"
-    return 1
-  fi
-  daemon_after="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
-  [[ -n "${daemon_after}" && "${daemon_after}" != "${daemon_before}" ]]
-  record_evidence daemon_restart.new_process pass
-
-  attempt_after="$(attempt_sha)"
-  [[ "${attempt_after}" == "${attempt_before}" ]]
-  assert_attempt_exact "${boot_after}" "${generation}" "${profile_id}" succeeded
-  record_evidence daemon_restart.attempt_unchanged pass
-
-  session_after="$(hosted_vm_tun_session_id)"
-  [[ "${session_after}" == "${session_before}" ]]
-  record_evidence daemon_restart.session_unchanged pass
-
-  hosted_vm_tun_capture_exact_active_authority no
-  record_evidence daemon_restart.exact_authority pass
-  hosted_vm_tun_assert_direct_blocked
-  record_evidence daemon_restart.privacy_protected pass
-  hosted_vm_tun_assert_foreign_state
+  # Calls remain outside conditionals so errexit stops on *any* failed
+  # assertion, not just a failed status poll. Never retry a failed replay.
+  for ((round=1; round<=ACTIVE_RESTART_ROUNDS; round++)); do
+    run_active_restart_round "${round}" "${boot_after}" "${generation}" "${profile_id}" "${attempt_before}" "${session_before}"
+  done
 
   mark_failure product explicit_disconnect
   hosted_vm_tun_disconnect
@@ -486,5 +537,6 @@ main() {
   trap cleanup EXIT
   run_scenario
 }
+configure_restart_rounds
 if [[ "${1:-}" == validate-report ]]; then validate_report; exit 0; fi
 main "$@"

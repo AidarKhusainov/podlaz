@@ -1,0 +1,79 @@
+name: Bounded Boot Replay Diagnostic
+
+# Temporary research entry point: one branch, one job, no PR or scheduled fan-out.
+# A successful experiment does not qualify a product fix or authorize publication.
+on:
+  push:
+    branches: [diagnostics/boot-replay-budgeted]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boot-replay-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    name: Three bounded active-TUN restart observations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
+      PODLAZ_E2E_ACTIVE_RESTART_ROUNDS: '3'
+      E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-boot-replay-private
+      E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-boot-replay-public
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+      - name: Source contracts before VM allocation
+        run: |
+          test -z "$(gofmt -l .)"
+          go test ./internal/network/executor ./internal/daemon ./scripts/e2e -run 'Test(ResolvedScoped|TunDNSReadiness|PersistNetworkSessionReplayFailure|DaemonStatusSemantics|HostedVMBootAuthority|BootReplayDiagnostic)' -count=1
+          go vet ./internal/network/executor ./internal/daemon ./scripts/e2e
+          bash scripts/ci/repository-structure.sh --final
+      - name: Install VM qualification and lint tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cloud-image-utils iptables jq nftables openssh-client qemu-system-x86 qemu-utils shellcheck
+          bash scripts/ci/install-go-tool.sh nfpm
+          bash scripts/ci/install-go-tool.sh actionlint
+      - name: Lint diagnostic changes before package build
+        run: |
+          actionlint .github/workflows/boot-replay-diagnostic.yml
+          shellcheck -x -s bash -P scripts/e2e -e SC1091,SC2024,SC2034,SC2086,SC2155,SC2317,SC2318 scripts/e2e/hosted-vm-boot-authority.sh
+      - name: Build exact candidate once
+        env:
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: bash scripts/build-deb.sh
+      - name: Prepare private guest workspace
+        run: install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+      - name: Observe bounded restarts in one disposable guest
+        run: bash scripts/e2e/hosted-vm-boot-authority.sh "${DEV_DEB}"
+      - name: Validate public report
+        if: always()
+        run: bash scripts/e2e/hosted-vm-boot-authority.sh validate-report
+      - name: Remove private VM state
+        if: always()
+        run: rm -rf "${E2E_TMP_ROOT}"
+      - name: Upload public diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: boot-replay-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/podlaz-boot-replay-public/hosted-vm-boot-authority.txt
+          if-no-files-found: error
+          retention-days: 7
