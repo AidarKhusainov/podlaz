@@ -18,9 +18,9 @@ func TestNMOfficialXrayCompatibilityPrecedesEveryNetworkManagerWrite(t *testing.
 		Name: plan.Interface, MTU: int(plan.MTU), EgressMark: 101,
 	}
 	for _, tc := range []struct {
-		name string
+		name           string
 		preflightError bool
-		stageError bool
+		stageError     bool
 	}{
 		{"compatible", false, false},
 		{"official Xray rejects native provider config", true, false},
