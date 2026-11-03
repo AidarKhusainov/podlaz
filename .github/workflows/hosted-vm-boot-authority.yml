@@ -4,6 +4,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+    inputs:
+      restart_cycles:
+        description: 'Same-boot restart cycles in one guest; stop on first failure'
+        type: choice
+        default: '1'
+        options: ['1', '2', '3']
 
 permissions:
   contents: read
@@ -16,15 +22,24 @@ jobs:
   qualify:
     name: Real boot autostart and same-boot authority
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    # Multi-cycle diagnostics have a hard spend ceiling, not a relaxed
+    # acceptance deadline. A cancelled/timed-out experiment is inconclusive.
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.restart_cycles != '1' && 30 || 150 }}
     env:
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
       CANDIDATE_COMMIT: ${{ github.sha }}
+      PODLAZ_E2E_BOOT_RESTART_CYCLES: ${{ github.event_name == 'workflow_dispatch' && inputs.restart_cycles || '1' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Validate diagnostic budget
+        run: |
+          case "${PODLAZ_E2E_BOOT_RESTART_CYCLES}" in
+            1|2|3) ;;
+            *) echo 'restart_cycles must be 1, 2 or 3' >&2; exit 1 ;;
+          esac
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
@@ -33,6 +48,8 @@ jobs:
           cache-dependency-path: |
             go.mod
             packaging/package-toolchain.env
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedVMBootAuthority' -count=1
       - name: Install VM qualification tools
         run: |
           sudo apt-get update
@@ -43,8 +60,6 @@ jobs:
         env:
           PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: bash scripts/build-deb.sh
-      - name: Scenario contract
-        run: go test ./scripts/e2e -run '^TestHostedVMBootAuthority' -count=1
       - name: Run real boot authority qualification
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-vm-boot-authority-private

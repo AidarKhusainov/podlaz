@@ -320,10 +320,73 @@ cleanup() {
   exit "${saved}"
 }
 
+boot_restart_cycles() {
+  local cycles="${PODLAZ_E2E_BOOT_RESTART_CYCLES:-1}"
+  case "${cycles}" in
+    1|2|3) printf '%s\n' "${cycles}" ;;
+    *) printf 'boot restart cycles must be 1, 2 or 3\n' >&2; return 1 ;;
+  esac
+}
+
+restart_active_daemon() {
+  local boot_after="$1" generation="$2" profile_id="$3" attempt_before="$4" session_before="$5"
+  local diagnostic_cycle="$6" daemon_before daemon_after attempt_after session_after restart_start_seconds current_boot
+  # Keep this function and shared guest helpers outside if/|| contexts.
+  # They rely on the scenario's set -Eeuo pipefail for intermediate failures.
+  mark_failure product daemon.same_boot_restart
+  daemon_before="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')" || return 1
+  [[ -n "${daemon_before}" ]] || return 1
+  restart_start_seconds=$SECONDS
+  hosted_vm_ga_bash 'systemctl restart podlazd.service'
+  printf 'boot-restart-timing.systemctl_seconds=%s\n' "$(( SECONDS - restart_start_seconds ))" >&2
+  if ! hosted_vm_tun_wait_status verified-active 180 diagnose; then
+    boot_restart_readonly_diagnostic || true
+    mark_failure product "daemon.same_boot_restart.$(daemon_restart_failure_token)"
+    return 1
+  fi
+  daemon_after="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')" || return 1
+  [[ -n "${daemon_after}" && "${daemon_after}" != "${daemon_before}" ]] || return 1
+
+  attempt_after="$(attempt_sha)" || return 1
+  [[ "${attempt_after}" == "${attempt_before}" ]] || return 1
+  assert_attempt_exact "${boot_after}" "${generation}" "${profile_id}" succeeded
+  session_after="$(hosted_vm_tun_session_id)" || return 1
+  [[ "${session_after}" == "${session_before}" ]] || return 1
+  hosted_vm_tun_capture_exact_active_authority no
+  hosted_vm_tun_assert_direct_blocked
+  hosted_vm_tun_assert_foreign_state
+  if [[ "${diagnostic_cycle}" == 1 ]]; then
+    current_boot="$(hosted_vm_boot_id)" || return 1
+    [[ "${current_boot}" == "${boot_after}" ]] || return 1
+    hosted_vm_tun_run_traffic
+  fi
+}
+
+run_active_daemon_restarts() {
+  local cycles cycle key
+  cycles="$(boot_restart_cycles)" || return 1
+  printf 'boot-restart-experiment.requested=%s\n' "${cycles}" >&2
+  for ((cycle = 1; cycle <= cycles; cycle++)); do
+    printf 'boot-restart-experiment.cycle=%s\n' "${cycle}" >&2
+    # An unguarded call preserves errexit inside the shared guest helpers;
+    # a failure exits through the existing cleanup/report trap, never retries.
+    restart_active_daemon "$@" "$((cycles > 1))"
+    printf 'boot-restart-experiment.completed=%s\n' "${cycle}" >&2
+  done
+  # Publish aggregate PASS only after every requested cycle passes. Never
+  # restart a failed replay or let an earlier successful cycle hide a later RED.
+  for key in daemon_restart.new_process daemon_restart.attempt_unchanged daemon_restart.session_unchanged \
+    daemon_restart.exact_authority daemon_restart.privacy_protected; do
+    record_evidence "${key}" pass
+  done
+  if ((cycles > 1)); then
+    printf 'boot-restart-experiment.outcome=not-reproduced\n' >&2
+  fi
+}
+
 run_scenario() {
   local profile_id boot_before boot_after generation attempt_before session_before
-  local daemon_before daemon_after attempt_after session_after attempt_disconnected
-  local restart_start_seconds
+  local attempt_disconnected
 
   mark_failure capability vm.acceleration
   hosted_vm_probe_acceleration
@@ -412,35 +475,7 @@ run_scenario() {
 
   attempt_before="$(attempt_sha)"
   session_before="$(hosted_vm_tun_session_id)"
-  daemon_before="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
-
-  mark_failure product daemon.same_boot_restart
-  restart_start_seconds=$SECONDS
-  hosted_vm_ga_bash 'systemctl restart podlazd.service'
-  printf 'boot-restart-timing.systemctl_seconds=%s\n' "$(( SECONDS - restart_start_seconds ))" >&2
-  if ! hosted_vm_tun_wait_status verified-active 180 diagnose; then
-    boot_restart_readonly_diagnostic
-    mark_failure product "daemon.same_boot_restart.$(daemon_restart_failure_token)"
-    return 1
-  fi
-  daemon_after="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
-  [[ -n "${daemon_after}" && "${daemon_after}" != "${daemon_before}" ]]
-  record_evidence daemon_restart.new_process pass
-
-  attempt_after="$(attempt_sha)"
-  [[ "${attempt_after}" == "${attempt_before}" ]]
-  assert_attempt_exact "${boot_after}" "${generation}" "${profile_id}" succeeded
-  record_evidence daemon_restart.attempt_unchanged pass
-
-  session_after="$(hosted_vm_tun_session_id)"
-  [[ "${session_after}" == "${session_before}" ]]
-  record_evidence daemon_restart.session_unchanged pass
-
-  hosted_vm_tun_capture_exact_active_authority no
-  record_evidence daemon_restart.exact_authority pass
-  hosted_vm_tun_assert_direct_blocked
-  record_evidence daemon_restart.privacy_protected pass
-  hosted_vm_tun_assert_foreign_state
+  run_active_daemon_restarts "${boot_after}" "${generation}" "${profile_id}" "${attempt_before}" "${session_before}"
 
   mark_failure product explicit_disconnect
   hosted_vm_tun_disconnect
@@ -486,6 +521,7 @@ run_scenario() {
 
 main() {
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
+  boot_restart_cycles >/dev/null || return 1
   require_cmd awk bash curl dpkg-deb find grep install jq mktemp python3 readlink seq sha256sum sleep ss
   validate_candidate "$1"
   install -d -m 0700 "${PRIVATE_ROOT}" "${E2E_ARTIFACT_DIR}" "${XRAY_ROOT}"
