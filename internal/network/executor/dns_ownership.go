@@ -61,18 +61,26 @@ func checkDefaultDNSOwnershipLinks(links []netsnapshot.ResolvedLink, targetLink 
 // is never a lease on ownership. No foreign link is ever changed by this check.
 func (e ResolvedDNSExecutor) CheckDefaultDNSOwnership(ctx context.Context, targetLink string) error {
 	result, err := observeCommand(ctx, e.Runner, "resolvectl", "status", "--no-pager")
-	if err != nil || strings.TrimSpace(result.Stdout) == "" {
+	if err != nil {
 		return &DefaultDNSOwnershipError{Unknown: true}
 	}
-	links := netsnapshot.ParseResolvedLinks(result.Stdout)
+	_, ownershipErr := checkDefaultDNSOwnershipStatus(result.Stdout, targetLink)
+	return ownershipErr
+}
+
+func checkDefaultDNSOwnershipStatus(output, targetLink string) ([]netsnapshot.ResolvedLink, error) {
+	if strings.TrimSpace(output) == "" {
+		return nil, &DefaultDNSOwnershipError{Unknown: true}
+	}
+	links := netsnapshot.ParseResolvedLinks(output)
 	headers := 0
-	for _, line := range strings.Split(result.Stdout, "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "Link ") {
 			headers++
 		}
 	}
-	if headers != len(links) || (headers == 0 && !strings.Contains(result.Stdout, "Global")) {
-		return &DefaultDNSOwnershipError{Unknown: true}
+	if headers != len(links) || (headers == 0 && !strings.Contains(output, "Global")) {
+		return nil, &DefaultDNSOwnershipError{Unknown: true}
 	}
-	return checkDefaultDNSOwnershipLinks(links, targetLink)
+	return links, checkDefaultDNSOwnershipLinks(links, targetLink)
 }
