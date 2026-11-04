@@ -62,6 +62,16 @@ func (l *networkSessionLifecycle) restorePreviousDataPlane(ctx context.Context, 
 	l.continuationMu.Unlock()
 
 	_, restoreErr := l.lifecycle.Connect(restoreCtx, previous)
+	if errors.Is(restoreErr, errConnectionAlreadyActive) {
+		// An existing Xray child is not evidence that it is the previous
+		// protected profile. Resolve the conflict from durable exact session
+		// and verified current-generation evidence before accepting restore.
+		if _, verified := l.verifiedSameNetworkSession(restoreCtx, previous, previous, true); verified {
+			restoreErr = nil
+		} else {
+			restoreErr = fmt.Errorf("previous protected generation could not be verified after an active-core conflict: %w", restoreErr)
+		}
+	}
 	cancel()
 
 	l.continuationMu.Lock()
@@ -71,7 +81,7 @@ func (l *networkSessionLifecycle) restorePreviousDataPlane(ctx context.Context, 
 	}
 	l.continuationMu.Unlock()
 
-	if restoreErr == nil || errors.Is(restoreErr, errConnectionAlreadyActive) {
+	if restoreErr == nil {
 		return nil
 	}
 	if stopped && errors.Is(restoreErr, context.Canceled) {

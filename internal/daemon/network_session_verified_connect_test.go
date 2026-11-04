@@ -539,3 +539,72 @@ func TestUnconvergedPrivacyTransitionCannotBeRestoredFromPreflightLabel(t *testi
 	}
 }
 
+
+func TestProtectedPreviousGenerationActiveConflictRequiresVerifiedExactAuthority(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		status   func(api.ConnectRequest) api.StatusResponse
+		verified bool
+	}{
+		{name: "status unavailable remains recovery required"},
+		{name: "wrong currently active profile remains recovery required", status: func(req api.ConnectRequest) api.StatusResponse {
+			result := verifiedConnectStatus(req)
+			result.ProfileID = "other-profile"
+			return result
+		}},
+		{name: "degraded previous generation remains recovery required", status: func(req api.ConnectRequest) api.StatusResponse {
+			result := verifiedConnectStatus(req)
+			result.TunHealth = &api.TunHealthStatus{
+				State: api.TunHealthDegraded, Classification: api.TunHealthConnectivityFailed, NetworkGeneration: 2,
+			}
+			return result
+		}},
+		{name: "same verified protected old generation accepts already-active conflict", status: verifiedConnectStatus, verified: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			continuation := newNetworkSessionContinuationStore(t.TempDir(), fixedBootID("boot-a"))
+			old := testContinuationRequest()
+			if err := continuation.Save(old); err != nil {
+				t.Fatal(err)
+			}
+			protection := testArmedPrivacyProtection()
+			if err := continuation.stateStore().SetProtection(&protection); err != nil {
+				t.Fatal(err)
+			}
+			target := old
+			target.Profile.ID = "new"
+			target.Profile.Server = "new.example.test"
+			target.Handoff = api.HandoffReplacePodlaz
+			cause := newTunVerificationError("system-resolver", "target DNS failure", errors.New("private target details"))
+			spy := &previousReconnectFailureSpy{
+				store: continuation.stateStore(),
+				target: target.Profile.ID,
+				targetCause: cause,
+				restoreErr: errConnectionAlreadyActive,
+			}
+			lifecycle := newNetworkSessionLifecycle(spy, continuation)
+			if tt.status != nil {
+				lifecycle.verifiedStatus = func(context.Context) api.StatusResponse {
+					return tt.status(old)
+				}
+			}
+			response, err := lifecycle.Connect(context.Background(), target)
+			if err == nil || response.Connection == "active" ||
+				len(spy.calls) != 2 {
+				t.Fatalf("failed target unexpectedly claimed active: response=%#v err=%v calls=%#v", response, err, spy.calls)
+			}
+			var restoreBlocked protectedPreviousGenerationRestoreError
+			if got := errors.As(err, &restoreBlocked); got == tt.verified {
+				t.Fatalf("restoration verification mismatch: blocked=%v verified=%v err=%v", got, tt.verified, err)
+			}
+			if daemonAPIHTTPStatusCode(err) != 503 {
+				t.Fatalf("attempt must report typed verification/recovery failure: %v", err)
+			}
+			state, exists, loadErr := continuation.stateStore().Load()
+			if loadErr != nil || !exists || state.Protection == nil ||
+				state.Request.Profile.ID != old.Profile.ID || state.Intent != networkSessionIntentResume {
+				t.Fatalf("restore lost durable protected prior authority: state=%#v err=%v", state, loadErr)
+			}
+		})
+	}
+}
