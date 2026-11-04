@@ -18,6 +18,16 @@ func (e protectedReplacementCleanupError) Error() string {
 
 func (e protectedReplacementCleanupError) Unwrap() error { return e.cause }
 
+// A transaction rollback can converge while the previous generation fails
+// to reconnect or reverify. Never present that as successful restoration.
+type protectedPreviousGenerationRestoreError struct{ cause error }
+
+func (e protectedPreviousGenerationRestoreError) Error() string {
+	return "Unable to finish VPN profile switching: the previous session's data plane could not be verified after rollback. Protection may remain armed; the connection is recovery-required. Run podlaz status, podlaz debug doctor --tun and podlaz debug recover."
+}
+
+func (e protectedPreviousGenerationRestoreError) Unwrap() error { return e.cause }
+
 // Restoring a previous generation executes full-TUN connectivity verification,
 // potentially twice. It needs a separate bounded budget from rollback.
 const protectedPreviousGenerationRestoreTimeout = 2 * time.Minute

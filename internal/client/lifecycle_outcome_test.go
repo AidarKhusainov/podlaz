@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -111,5 +112,63 @@ func TestLifecycleMalformedSuccessDoesNotConfirmConnected(t *testing.T) {
 func TestDefaultLifecycleBudgetCoversVerificationAndRestore(t *testing.T) {
 	if defaultNetworkLifecycleTimeout < 3*time.Minute {
 		t.Fatalf("default lifecycle budget %s cannot cover two connectivity verification passes plus protected rollback/restore", defaultNetworkLifecycleTimeout)
+	}
+}
+
+func TestLifecycleTimeoutBeforeDaemonCommitNextRequestSeesCommittedAuthority(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	committed := make(chan struct{})
+	var requests atomic.Int32
+	var mutations atomic.Int32
+	request := lifecycleTestRequest()
+	socket := serveLifecycleTestSocket(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			close(entered)
+			// The daemon-owned commit may finish even when this request's
+			// client deadline has already expired.
+			<-release
+			mutations.Add(1)
+			close(committed)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(api.LifecycleResponse{
+			Connection: "active", Mode: "tun", ProfileID: request.Profile.ID,
+			ProfileName: request.Profile.Name, Proxy: "active", TUN: "active",
+		})
+	}))
+	client := LifecycleClient{SocketPath: socket, Timeout: 35 * time.Millisecond}
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := client.Connect(context.Background(), request)
+		firstDone <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("first request never entered daemon")
+	}
+	firstErr := <-firstDone
+	if !errors.Is(firstErr, ErrLifecycleOutcomeUnknown) || IsDaemonUnavailable(firstErr) {
+		t.Fatalf("expired in-flight mutation incorrectly classified: %v", firstErr)
+	}
+	close(release)
+	select {
+	case <-committed:
+	case <-time.After(time.Second):
+		t.Fatal("daemon did not finish in-flight commit after client deadline")
+	}
+
+	// This models the daemon's serialized exact-state admission: the next
+	// explicit request reobserves the committed authority and is a no-op.
+	second, err := (LifecycleClient{SocketPath: socket}).Connect(context.Background(), request)
+	if err != nil || second.Connection != "active" || second.ProfileID != request.Profile.ID {
+		t.Fatalf("subsequent observed connect failed: response=%#v err=%v", second, err)
+	}
+	if got := mutations.Load(); got != 1 {
+		t.Fatalf("unknown-outcome retry opened a second mutation: %d", got)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("expected one expired and one observed request; got %d", got)
 	}
 }

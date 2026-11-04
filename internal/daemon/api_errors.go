@@ -72,7 +72,8 @@ func daemonAPIHTTPStatusCode(err error) int {
 	// conflict. Reporting 409 could incorrectly suggest a safe retry while
 	// rollback authority remains unresolved.
 	var cleanup protectedReplacementCleanupError
-	if errors.As(err, &cleanup) {
+	var restore protectedPreviousGenerationRestoreError
+	if errors.As(err, &cleanup) || errors.As(err, &restore) {
 		return http.StatusServiceUnavailable
 	}
 	var ownership *netexecutor.DefaultDNSOwnershipError

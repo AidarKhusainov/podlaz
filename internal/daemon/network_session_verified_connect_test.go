@@ -407,3 +407,66 @@ func TestIncompletePrivacyReconciliationDominatesCompletedTransactionAndPrefligh
 		})
 	}
 }
+
+type previousReconnectFailureSpy struct {
+	store       networkSessionStateStore
+	target      string
+	targetCause error
+	restoreErr  error
+	calls       []string
+}
+
+func (s *previousReconnectFailureSpy) Connect(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+	s.calls = append(s.calls, req.Profile.ID)
+	if req.Profile.ID == s.target {
+		// Simulate inner exact transaction/barrier restoration before the
+		// outer lifecycle independently reconnects the previous data plane.
+		if err := s.store.RestoreReplacement(); err != nil {
+			return api.LifecycleResponse{}, err
+		}
+		return api.LifecycleResponse{}, withTunFailurePhase("connectivity-verify", "tx-target", "completed", s.targetCause)
+	}
+	return api.LifecycleResponse{}, s.restoreErr
+}
+
+func (s *previousReconnectFailureSpy) Disconnect(context.Context) (api.LifecycleResponse, error) {
+	return api.LifecycleResponse{}, nil
+}
+
+func TestPreviousProtectedGenerationFailureAfterRollbackIsRecoveryRequired(t *testing.T) {
+	continuation := newNetworkSessionContinuationStore(t.TempDir(), fixedBootID("boot-a"))
+	previous := testContinuationRequest()
+	if err := continuation.Save(previous); err != nil {
+		t.Fatal(err)
+	}
+	protection := testArmedPrivacyProtection()
+	if err := continuation.stateStore().SetProtection(&protection); err != nil {
+		t.Fatal(err)
+	}
+
+	target := previous
+	target.Profile.ID = "replacement"
+	target.Handoff = api.HandoffReplacePodlaz
+	spy := &previousReconnectFailureSpy{
+		store: continuation.stateStore(), target: target.Profile.ID,
+		targetCause: errors.New("candidate credentials rejected"),
+		restoreErr: errors.New("previous generation revalidation failed"),
+	}
+	response, err := newNetworkSessionLifecycle(spy, continuation).Connect(context.Background(), target)
+	var recoveryRequired protectedPreviousGenerationRestoreError
+	if !errors.As(err, &recoveryRequired) || daemonAPIHTTPStatusCode(err) != 503 {
+		t.Fatalf("failed old-generation revalidation must be recovery-required: %v", err)
+	}
+	if response.Connection == "active" || strings.Contains(err.Error(), "credentials rejected") ||
+		strings.Contains(err.Error(), "revalidation failed") {
+		t.Fatalf("failed restore leaked private cause or false active: response=%#v error=%v", response, err)
+	}
+	if !reflect.DeepEqual(spy.calls, []string{"replacement", previous.Profile.ID}) {
+		t.Fatalf("unexpected recovery order: %#v", spy.calls)
+	}
+	state, exists, stateErr := continuation.stateStore().Load()
+	if stateErr != nil || !exists || state.Protection == nil ||
+		state.Intent != networkSessionIntentResume || state.Request.Profile.ID != previous.Profile.ID {
+		t.Fatalf("failed revalidation erased old protected recovery authority: state=%#v err=%v", state, stateErr)
+	}
+}

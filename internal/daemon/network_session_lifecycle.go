@@ -103,7 +103,7 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 	}
 	if replacementAttempt {
 		if restoreErr := l.restorePreviousDataPlane(ctx, previous); restoreErr != nil {
-			return response, errors.Join(connectErr, restoreErr)
+			return response, protectedPreviousGenerationRestoreError{cause: errors.Join(connectErr, restoreErr)}
 		}
 	}
 	if reasonErr := l.publishTerminalConnectReason(ctx, request, connectErr, previousExists); reasonErr != nil {
