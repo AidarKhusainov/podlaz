@@ -18,7 +18,11 @@ import (
 // per pass). A failed replacement can additionally require exact rollback and
 // restoring a previous protected generation. Keep the client deadline beyond
 // those daemon-owned bounded phases rather than timing out during verification.
-const defaultLifecycleTimeout = 4 * time.Minute
+const defaultLifecycleTimeout = 30 * time.Second
+
+// Only Connect/Disconnect need the larger full-TUN lifecycle/rollback budget.
+// Keep the existing bound for unrelated autostart/status operations.
+const defaultNetworkLifecycleTimeout = 4 * time.Minute
 
 // ErrLifecycleOutcomeUnknown means the daemon socket connected, but the client
 // cannot confirm whether the requested operation committed.
@@ -44,7 +48,7 @@ func (c LifecycleClient) do(ctx context.Context, operation, path string, payload
 	}
 	timeout := c.Timeout
 	if timeout == 0 {
-		timeout = defaultLifecycleTimeout
+		timeout = defaultNetworkLifecycleTimeout
 	}
 
 	lifecycle, err := retryDaemonSocketReadiness(ctx, func(attemptCtx context.Context) (api.LifecycleResponse, error) {

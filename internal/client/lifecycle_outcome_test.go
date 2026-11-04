@@ -109,7 +109,7 @@ func TestLifecycleMalformedSuccessDoesNotConfirmConnected(t *testing.T) {
 }
 
 func TestDefaultLifecycleBudgetCoversVerificationAndRestore(t *testing.T) {
-	if defaultLifecycleTimeout < 3*time.Minute {
-		t.Fatalf("default lifecycle budget %s cannot cover two connectivity verification passes plus protected rollback/restore", defaultLifecycleTimeout)
+	if defaultNetworkLifecycleTimeout < 3*time.Minute {
+		t.Fatalf("default lifecycle budget %s cannot cover two connectivity verification passes plus protected rollback/restore", defaultNetworkLifecycleTimeout)
 	}
 }

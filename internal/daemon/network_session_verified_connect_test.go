@@ -339,7 +339,7 @@ func TestUnknownProtectedReplacementFailureWithPendingAuthorityFailsClosed(t *te
 	target.Profile.ID = "replacement"
 	target.Profile.Server = "replacement.example.test"
 	target.Handoff = api.HandoffReplacePodlaz
-	spy := &incompleteReplacementSpy{cause: errors.New("candidate outcome unknown")}
+	spy := &protectedPrivacyFailureSpy{err: errors.New("candidate outcome unknown")}
 	_, err := newNetworkSessionLifecycle(spy, continuation).Connect(context.Background(), target)
 	var blocked protectedReplacementCleanupError
 	if !errors.As(err, &blocked) || daemonAPIHTTPStatusCode(err) != 503 {
