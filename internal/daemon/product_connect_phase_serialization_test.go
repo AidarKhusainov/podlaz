@@ -40,7 +40,7 @@ func TestConnectingStatusTracksActiveSerializedOperationNotQueuedCaller(t *testi
 	spy := &phaseSerializedLifecycle{
 		entered: make(chan string, 2),
 		release: map[string]chan struct{}{
-			first.Profile.ID: firstRelease,
+			first.Profile.ID:  firstRelease,
 			second.Profile.ID: secondRelease,
 		},
 	}

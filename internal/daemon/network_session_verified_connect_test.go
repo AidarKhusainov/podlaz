@@ -539,7 +539,6 @@ func TestUnconvergedPrivacyTransitionCannotBeRestoredFromPreflightLabel(t *testi
 	}
 }
 
-
 func TestProtectedPreviousGenerationActiveConflictRequiresVerifiedExactAuthority(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
@@ -577,10 +576,10 @@ func TestProtectedPreviousGenerationActiveConflictRequiresVerifiedExactAuthority
 			target.Handoff = api.HandoffReplacePodlaz
 			cause := newTunVerificationError("system-resolver", "target DNS failure", errors.New("private target details"))
 			spy := &previousReconnectFailureSpy{
-				store: continuation.stateStore(),
-				target: target.Profile.ID,
+				store:       continuation.stateStore(),
+				target:      target.Profile.ID,
 				targetCause: cause,
-				restoreErr: errConnectionAlreadyActive,
+				restoreErr:  errConnectionAlreadyActive,
 			}
 			lifecycle := newNetworkSessionLifecycle(spy, continuation)
 			if tt.status != nil {
