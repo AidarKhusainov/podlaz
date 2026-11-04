@@ -140,7 +140,7 @@ func (s Server) prepareRuntime(ctx context.Context) (*daemonRuntime, error) {
 	continuation := newNetworkSessionContinuationStore(runtimeDir, s.bootID)
 	sessionLifecycle := newNetworkSessionLifecycle(healthLifecycle, continuation)
 	sessionLifecycle.verifiedStatus = verifiedStatus
-	lockedLifecycle := operationLock.wrap(sessionLifecycle)
+	lockedLifecycle := operationLock.wrapWithProductPhase(sessionLifecycle, productPhase)
 	startupMutationGate := newNetworkSessionStartupMutationGate(lockedLifecycle)
 	automaticExecutor = tunAutomaticDispositionExecutor{
 		reconcile: sessionLifecycle.ReconcileProtectedTun,

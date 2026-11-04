@@ -46,10 +46,17 @@ func newLifecycleOperationLock() *lifecycleOperationLock {
 }
 
 func (l *lifecycleOperationLock) wrap(lifecycle lifecycleService) lifecycleService {
+	return l.wrapWithProductPhase(lifecycle, nil)
+}
+
+// The product phase is installed on the serialized lifecycle, not the outer
+// HTTP handler. A queued connect must not replace the profile currently being
+// applied or clear its in-progress marker when an earlier request completes.
+func (l *lifecycleOperationLock) wrapWithProductPhase(lifecycle lifecycleService, tracker *productLifecyclePhaseTracker) lifecycleService {
 	if l == nil || lifecycle == nil {
 		return lifecycle
 	}
-	return operationLockedLifecycle{lock: l, lifecycle: lifecycle}
+	return operationLockedLifecycle{lock: l, lifecycle: lifecycle, tracker: tracker}
 }
 
 func (l *lifecycleOperationLock) setRevalidationCancel(cancel context.CancelFunc) {
@@ -346,6 +353,7 @@ func lifecycleOperationRecoveryError(err error) api.RecoveryResponse {
 type operationLockedLifecycle struct {
 	lock      *lifecycleOperationLock
 	lifecycle lifecycleService
+	tracker   *productLifecyclePhaseTracker
 }
 
 func (l operationLockedLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
@@ -358,6 +366,8 @@ func (l operationLockedLifecycle) Connect(ctx context.Context, request api.Conne
 		return api.LifecycleResponse{}, err
 	}
 	defer l.lock.release()
+	l.tracker.beginConnect(request)
+	defer l.tracker.endConnect()
 	return l.lifecycle.Connect(ctx, request)
 }
 
