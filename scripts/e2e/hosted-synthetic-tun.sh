@@ -1272,7 +1272,8 @@ assert_transition_verified_active() {
 # The relay runs as the same unprivileged user, so authorization is unchanged.
 qualify_lost_lifecycle_response() {
   local first_selector="$1" second_selector="$2" second_id="$3" session_id="$4" table_id="$5"
-  local dir="${GUEST_PRIVATE}/lifecycle-response-drop" marker="${dir}/committed"
+  local dir="${GUEST_PRIVATE}/lifecycle-response-drop"
+  local marker="${dir}/committed"
   local active_tx failed_rc
 
   guest_exec install -d -o e2e -g e2e -m 0700 "${dir}"
