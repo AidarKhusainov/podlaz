@@ -470,3 +470,72 @@ func TestPreviousProtectedGenerationFailureAfterRollbackIsRecoveryRequired(t *te
 		t.Fatalf("failed revalidation erased old protected recovery authority: state=%#v err=%v", state, stateErr)
 	}
 }
+
+type transitionalPrivacyFailureLifecycle struct {
+	store networkSessionStateStore
+	calls int
+	cause error
+}
+
+func (s *transitionalPrivacyFailureLifecycle) Connect(_ context.Context, _ api.ConnectRequest) (api.LifecycleResponse, error) {
+	s.calls++
+	state, exists, err := s.store.Load()
+	if err != nil || !exists || state.Replacement == nil || state.Protection == nil {
+		return api.LifecycleResponse{}, errors.New("missing exact replacement fixture")
+	}
+	// The target's data-plane transaction has not started, but widening the
+	// previous barrier already persisted transitional exact ownership.
+	widened := cloneNetworkSessionProtection(*state.Protection)
+	widened.State = networkSessionProtectionArming
+	widened.PreviousBootstrapIPv4 = []string{"192.0.2.10"}
+	widened.BootstrapIPv4 = []string{"192.0.2.10", "192.0.2.20"}
+	if err := s.store.SetProtection(&widened); err != nil {
+		return api.LifecycleResponse{}, err
+	}
+	return api.LifecycleResponse{}, withTunFailurePhase("privacy-envelope-replace", "", "not-started", s.cause)
+}
+
+func (s *transitionalPrivacyFailureLifecycle) Disconnect(context.Context) (api.LifecycleResponse, error) {
+	return api.LifecycleResponse{}, nil
+}
+
+func TestUnconvergedPrivacyTransitionCannotBeRestoredFromPreflightLabel(t *testing.T) {
+	continuation := newNetworkSessionContinuationStore(t.TempDir(), fixedBootID("boot-a"))
+	first := testContinuationRequest()
+	if err := continuation.Save(first); err != nil {
+		t.Fatal(err)
+	}
+	protection := testNetworkSessionProtection()
+	if err := continuation.stateStore().SetProtection(&protection); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.Profile.ID = "next"
+	second.Profile.Server = "next.example.test"
+	second.Handoff = api.HandoffReplacePodlaz
+	cause := errors.New("private atomic privacy replace failure")
+	spy := &transitionalPrivacyFailureLifecycle{store: continuation.stateStore(), cause: cause}
+	lifecycle := newNetworkSessionLifecycle(spy, continuation)
+
+	_, err := lifecycle.Connect(context.Background(), second)
+	if !errors.Is(err, cause) || daemonAPIHTTPStatusCode(err) != 503 {
+		t.Fatalf("unconverged protected transition must remain recovery-required: %v", err)
+	}
+	if strings.Contains(err.Error(), "private atomic") {
+		t.Fatalf("private failure leaked in conflict response: %v", err)
+	}
+	if spy.calls != 1 {
+		t.Fatalf("previous data plane was started before exact reconciliation: calls=%d", spy.calls)
+	}
+	state, exists, loadErr := continuation.stateStore().Load()
+	if loadErr != nil || !exists || state.Replacement == nil || state.Protection == nil {
+		t.Fatalf("transition lost exact cleanup authority: state=%#v err=%v", state, loadErr)
+	}
+	if state.Request.Profile.ID != second.Profile.ID ||
+		state.Protection.State != networkSessionProtectionArming ||
+		len(state.Protection.PreviousBootstrapIPv4) != 1 ||
+		len(state.Protection.BootstrapIPv4) != 2 {
+		t.Fatalf("unconverged privacy composition was overwritten: %#v", state)
+	}
+}
+

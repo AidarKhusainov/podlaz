@@ -91,10 +91,20 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 		if stateErr != nil || !exists {
 			return response, protectedReplacementCleanupError{cause: errors.Join(connectErr, stateErr)}
 		}
-		// A positively identified preflight failure happens before mutation.
-		// Otherwise, a still-pending replacement must first be converged by
-		// its exact privacy rollback, not blindly restored from metadata.
-		if state.Replacement != nil && rollbackStatus != "not-started" {
+		// A "not-started" transaction result only proves that the new data
+		// plane did not start. Protected replacement preparation may already
+		// have widened the live/privacy composition before that phase. Never
+		// erase transitional exact ownership from metadata alone.
+		if state.Replacement != nil {
+			previousProtection := state.Replacement.PreviousProtection
+			if rollbackStatus != "not-started" || previousProtection == nil ||
+				state.Protection == nil || !reflect.DeepEqual(*previousProtection, *state.Protection) {
+				return response, protectedReplacementCleanupError{cause: connectErr}
+			}
+		} else if state.Protection != nil &&
+			!networkSessionRequestsEquivalentIgnoringHandoff(state.Request, previous) {
+			// A committed or otherwise changed protected generation is not
+			// evidence that the old request can be safely reactivated.
 			return response, protectedReplacementCleanupError{cause: connectErr}
 		}
 	}
