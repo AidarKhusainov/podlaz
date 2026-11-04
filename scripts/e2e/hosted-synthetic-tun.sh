@@ -885,22 +885,36 @@ print(sock.getsockname()[1])
 sock.close()
 PY
 )"
-  local inbound_protocol inbound_settings client_uri credential encoded
+  local inbound_protocol inbound_settings client_uri credential encoded second_inbound=""
   case "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" in
     vless)
       inbound_protocol=vless
       inbound_settings="{\"clients\":[{\"id\":\"${uuid}\"}],\"decryption\":\"none\"}"
       client_uri="vless://${uuid}@${ENDPOINT_IP}:${port}?type=tcp&security=none&encryption=none#hosted-synthetic"
       if [[ "${PODLAZ_E2E_PROFILE_TRANSITIONS}" == true ]]; then
-        # Distinct provider credentials make A and B independent profiles
-        # while sharing a deterministic isolated endpoint fixture.
-        local second_uuid invalid_uuid
+        # Keep the positive-control A listener byte-for-byte equivalent to
+        # the ordinary synthetic fixture. A separate listener and credential
+        # give B independent transport identity and exercise endpoint handoff.
+        local second_uuid invalid_uuid second_port
         second_uuid="$("${extract}/usr/lib/podlaz/xray" uuid | tr -d '[:space:]')"
         invalid_uuid="$("${extract}/usr/lib/podlaz/xray" uuid | tr -d '[:space:]')"
         [[ "${second_uuid}" != "${uuid}" && "${invalid_uuid}" != "${uuid}" && "${invalid_uuid}" != "${second_uuid}" ]] || return 1
-        inbound_settings="$(jq -cn --arg first "${uuid}" --arg second "${second_uuid}" '{clients:[{id:$first},{id:$second}],decryption:"none"}')"
-        printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic-b\n'           "${second_uuid}" "${ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/second-client-uri"
-        printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic-rejected\n'           "${invalid_uuid}" "${ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/rejected-client-uri"
+        second_port="$(python3 - "${ENDPOINT_IP}" <<'PY_SECOND_PORT'
+import socket
+import sys
+with socket.socket() as sock:
+    sock.bind((sys.argv[1], 0))
+    print(sock.getsockname()[1])
+PY_SECOND_PORT
+)"
+        [[ "${second_port}" =~ ^[1-9][0-9]*$ && "${second_port}" != "${port}" ]] || return 1
+        second_inbound="$(jq -cn --arg listen "${ENDPOINT_IP}" --argjson port "${second_port}" --arg id "${second_uuid}" '
+          {listen:$listen,port:$port,protocol:"vless",
+           settings:{clients:[{id:$id}],decryption:"none"},streamSettings:{security:"none"}}')"
+        printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic-b\n' \
+          "${second_uuid}" "${ENDPOINT_IP}" "${second_port}" >"${XRAY_ROOT}/second-client-uri"
+        printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic-rejected\n' \
+          "${invalid_uuid}" "${ENDPOINT_IP}" "${second_port}" >"${XRAY_ROOT}/rejected-client-uri"
         chmod 0600 "${XRAY_ROOT}/second-client-uri" "${XRAY_ROOT}/rejected-client-uri"
       fi
       ;;
@@ -956,6 +970,12 @@ PY
   "outbounds": [{"protocol": "freedom", "settings": {}}]
 }
 EOF_XRAY
+  if [[ -n "${second_inbound}" ]]; then
+    # Add the independent B listener without changing the known-good A one.
+    jq --argjson inbound "${second_inbound}" '.inbounds += [$inbound]' "${config}" >"${config}.next"
+    chmod 0600 "${config}.next"
+    mv "${config}.next" "${config}"
+  fi
   printf '%s\n' "${client_uri}" >"${XRAY_ROOT}/client-uri"
   chmod 0600 "${XRAY_ROOT}/client-uri"
   if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess || "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ]]; then
@@ -1478,6 +1498,27 @@ run_scenario() {
     if grep -qiF 'failed to start' "${XRAY_ROOT}/server.log"; then
       printf 'hysteria-server-class=start_failed\\n'
     fi
+  fi
+  if (( connect_code != 0 )) && [[ "${PODLAZ_E2E_PROFILE_TRANSITIONS}" == true ]]; then
+    # Only a fixed classification enters the public report; the daemon,
+    # status, core and command diagnostics remain guest/runner-private.
+    local failure_class="unclassified"
+    if guest_exec grep -Eqi 'could not verify DNS|uncached DNS|system resolver|DNS through the VPN' "${GUEST_PRIVATE}/connect.stderr"; then
+      failure_class="dns-verification"
+    elif guest_exec grep -Eqi 'could not verify full-VPN|connectivity probe|route lookup' "${GUEST_PRIVATE}/connect.stderr"; then
+      failure_class="connectivity-verification"
+    elif guest_exec grep -Eqi 'network session|recovery|rollback' "${GUEST_PRIVATE}/connect.stderr"; then
+      failure_class="network-session"
+    elif guest_exec grep -Eqi 'Xray|core|runtime' "${GUEST_PRIVATE}/connect.stderr"; then
+      failure_class="core-runtime"
+    elif guest_exec grep -Eqi 'conflict|already active|default DNS' "${GUEST_PRIVATE}/connect.stderr"; then
+      failure_class="conflict"
+    elif guest_exec grep -Eqi 'timeout|deadline|canceled' "${GUEST_PRIVATE}/connect.stderr"; then
+      failure_class="deadline"
+    elif guest_exec grep -Eqi 'permission|authorized|polkit' "${GUEST_PRIVATE}/connect.stderr"; then
+      failure_class="authorization"
+    fi
+    mark_failure diagnostic_unknown "tun.connect.${failure_class}"
   fi
   (( connect_code == 0 )) || return "${connect_code}"
   wait_guest_status verified-active 120
