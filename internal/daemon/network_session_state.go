@@ -75,6 +75,8 @@ type networkSessionStateStore struct {
 }
 
 var (
+	errProtectedNetworkSessionChangeWithoutHandoff = errors.New("protected Network Session change requires replace-podlaz handoff; inspect podlaz status before retrying")
+	errNetworkSessionTransitionInProgress = errors.New("network session transition is still converging; inspect podlaz status and run podlaz debug recover before retrying")
 	networkSessionIDPattern      = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	privacyEnvelopeTablePattern  = regexp.MustCompile(`^podlaz_pe_[0-9a-f]{12}(?:_[1-9][0-9]{0,2})?$`)
 	networkSessionInterfaceRegex = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
@@ -111,13 +113,13 @@ func (s networkSessionStateStore) BeginOrResume(request api.ConnectRequest) (net
 	}
 	if exists {
 		if current.Intent != networkSessionIntentResume {
-			return networkSessionState{}, fmt.Errorf("network session is converging with intent %q", current.Intent)
+			return networkSessionState{}, fmt.Errorf("%w (intent %q)", errNetworkSessionTransitionInProgress, current.Intent)
 		}
 		if current.Replacement != nil {
 			if reflect.DeepEqual(current.Request, request) {
 				return cloneNetworkSessionState(current), nil
 			}
-			return networkSessionState{}, errors.New("network session replacement is already in progress")
+			return networkSessionState{}, errNetworkSessionTransitionInProgress
 		}
 		if current.Protection != nil {
 			if api.NormalizeHandoffPolicy(request.Handoff) == api.HandoffReplacePodlaz {
@@ -136,7 +138,7 @@ func (s networkSessionStateStore) BeginOrResume(request api.ConnectRequest) (net
 				return cloneNetworkSessionState(current), nil
 			}
 			if !networkSessionRequestsEquivalentIgnoringHandoff(current.Request, request) {
-				return networkSessionState{}, errors.New("protected Network Session change requires replace-podlaz handoff")
+				return networkSessionState{}, errProtectedNetworkSessionChangeWithoutHandoff
 			}
 		}
 		current.Request = request

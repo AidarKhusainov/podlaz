@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -15,6 +16,9 @@ type networkSessionLifecycle struct {
 	lifecycle       lifecycleService
 	continuation    networkSessionContinuationStore
 	terminalReasons *productTerminalReasonStore
+	// Excludes the request-local "connecting" overlay. Sampled only under
+	// the daemon's lifecycle operation lock.
+	verifiedStatus func(context.Context) api.StatusResponse
 
 	continuationMu    sync.Mutex
 	explicitStop      bool
@@ -44,6 +48,10 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 		l.continuationMu.Unlock()
 		return api.LifecycleResponse{}, fmt.Errorf("load existing network session continuation before connect: %w", err)
 	}
+	if response, verified := l.verifiedSameNetworkSession(ctx, request, previous, previousExists); verified {
+		l.continuationMu.Unlock()
+		return response, nil
+	}
 	if err := l.continuation.Save(request); err != nil {
 		l.continuationMu.Unlock()
 		return api.LifecycleResponse{}, err
@@ -69,6 +77,15 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 	if connectErr == nil {
 		return response, nil
 	}
+	if replacementAttempt {
+		_, _, rollbackStatus := tunFailureLogFields(connectErr)
+		if rollbackStatus == "failed" {
+			// Incomplete candidate rollback must retain exact replacement and
+			// Privacy Envelope authority. Never start the old data plane over
+			// ambiguous candidate resources.
+			return response, protectedReplacementCleanupError{cause: connectErr}
+		}
+	}
 	if restoreErr := l.restorePreviousContinuation(previous, previousExists); restoreErr != nil {
 		return response, errors.Join(connectErr, restoreErr)
 	}
@@ -81,6 +98,65 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 		return response, errors.Join(connectErr, reasonErr)
 	}
 	return response, connectErr
+}
+
+// verifiedSameNetworkSession is the only idempotent connect shortcut. Exact
+// durable intent and current verified live status are both necessary; a
+// matching profile ID from an earlier CLI status is insufficient.
+func (l *networkSessionLifecycle) verifiedSameNetworkSession(
+	ctx context.Context, request, previous api.ConnectRequest, previousExists bool,
+) (api.LifecycleResponse, bool) {
+	if !previousExists || l.verifiedStatus == nil ||
+		request.Mode != planner.ModeTun ||
+		!networkSessionRequestsEquivalentIgnoringHandoff(previous, request) {
+		return api.LifecycleResponse{}, false
+	}
+
+	store := l.continuation.stateStore()
+	before, exists, err := store.Load()
+	if err != nil || !exists || before.Intent != networkSessionIntentResume ||
+		before.Replacement != nil || before.Protection == nil ||
+		before.Protection.State != networkSessionProtectionArmed ||
+		!networkSessionRequestsEquivalentIgnoringHandoff(before.Request, request) {
+		return api.LifecycleResponse{}, false
+	}
+
+	status := l.verifiedStatus(ctx)
+	if ctx.Err() != nil || status.Connection != "active" ||
+		status.Mode != planner.ModeTun || status.ProfileID != request.Profile.ID ||
+		status.ProfileName != request.Profile.Name ||
+		status.ActiveTransactionID == "" ||
+		status.TunHealth == nil || status.TunHealth.State != api.TunHealthVerified ||
+		status.LifecyclePhase != "" || len(status.InspectionWarnings) != 0 {
+		return api.LifecycleResponse{}, false
+	}
+	if status.StartupScan != nil &&
+		(status.StartupScan.Status != api.StartupScanStatusClean ||
+			len(status.StartupScan.Candidates) != 0 || len(status.StartupScan.Warnings) != 0) {
+		return api.LifecycleResponse{}, false
+	}
+	for _, tx := range status.Transactions {
+		if tx.RequiresCleanup {
+			return api.LifecycleResponse{}, false
+		}
+	}
+	after, exists, err := store.Load()
+	if err != nil || !exists || !reflect.DeepEqual(before, after) {
+		return api.LifecycleResponse{}, false
+	}
+	return api.LifecycleResponse{
+		Connection:        status.Connection,
+		Mode:              status.Mode,
+		ProfileID:         status.ProfileID,
+		ProfileName:       status.ProfileName,
+		Proxy:             status.Proxy,
+		TUN:               status.TUN,
+		Routes:            status.Routes,
+		DNS:               status.DNS,
+		Firewall:          status.Firewall,
+		RuntimeConfigPath: status.RuntimeConfigPath,
+		Warnings:          append([]string(nil), status.Warnings...),
+	}, true
 }
 
 // ReconcileProtectedTun is the unwrapped automatic-repair entry point used only

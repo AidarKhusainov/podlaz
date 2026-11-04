@@ -4,9 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
+
+// A failed exact rollback must not be mistaken for a restored session.
+type protectedReplacementCleanupError struct{ cause error }
+
+func (e protectedReplacementCleanupError) Error() string {
+	return "Unable to switch VPN profiles: exact cleanup did not complete. Protection may remain armed; do not assume either profile is connected. Run podlaz status, podlaz debug doctor --tun and podlaz debug recover."
+}
+
+func (e protectedReplacementCleanupError) Unwrap() error { return e.cause }
+
+// Restoring a previous generation executes full-TUN connectivity verification,
+// potentially twice. It needs a separate bounded budget from rollback.
+const protectedPreviousGenerationRestoreTimeout = 2 * time.Minute
 
 // restorePreviousDataPlane gives a failed protected replacement one bounded,
 // daemon-owned opportunity to restore the previous generation. It deliberately
@@ -25,7 +39,7 @@ func (l *networkSessionLifecycle) restorePreviousDataPlane(ctx context.Context, 
 		ctx = context.Background()
 	}
 
-	restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
+	restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), protectedPreviousGenerationRestoreTimeout)
 	l.continuationMu.Lock()
 	if l.explicitStop {
 		l.continuationMu.Unlock()

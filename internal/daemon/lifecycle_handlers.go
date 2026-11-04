@@ -71,7 +71,7 @@ func registerLifecycleHandlers(mux *http.ServeMux, lifecycle lifecycleService, a
 		}
 		response, err := lifecycle.Disconnect(r.Context())
 		if err != nil {
-			writeDaemonAPIHTTPError(w, daemonAPIInternal(err))
+			writeDaemonAPIHTTPError(w, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

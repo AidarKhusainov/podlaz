@@ -78,10 +78,16 @@ func daemonAPIHTTPStatusCode(err error) int {
 	if profile.IsValidationError(err) {
 		return http.StatusBadRequest
 	}
-	if errors.Is(err, errConnectionAlreadyActive) || errors.Is(err, errFullTunnelConnectionBecameActive) || isTunHandoffBlocker(err) || isTunStalePodlazStateBlocker(err) {
+	if errors.Is(err, errConnectionAlreadyActive) || errors.Is(err, errFullTunnelConnectionBecameActive) ||
+		errors.Is(err, errProtectedNetworkSessionChangeWithoutHandoff) ||
+		errors.Is(err, errNetworkSessionTransitionInProgress) ||
+		isTunHandoffBlocker(err) || isTunStalePodlazStateBlocker(err) {
 		return http.StatusConflict
 	}
-	if isRuntimeUnavailableError(err) || isRuntimeResolutionError(err) || isTunVerificationError(err) {
+	var cleanup protectedReplacementCleanupError
+	if errors.As(err, &cleanup) || errors.Is(err, errNetworkSessionStartupRecoveryPending) ||
+		errors.Is(err, errLifecycleShuttingDown) || isRuntimeUnavailableError(err) ||
+		isRuntimeResolutionError(err) || isTunVerificationError(err) {
 		return http.StatusServiceUnavailable
 	}
 	var apiErr *daemonAPIError
