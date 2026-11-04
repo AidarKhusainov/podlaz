@@ -450,7 +450,7 @@ func TestPreviousProtectedGenerationFailureAfterRollbackIsRecoveryRequired(t *te
 	spy := &previousReconnectFailureSpy{
 		store: continuation.stateStore(), target: target.Profile.ID,
 		targetCause: errors.New("candidate credentials rejected"),
-		restoreErr: errors.New("previous generation revalidation failed"),
+		restoreErr:  errors.New("previous generation revalidation failed"),
 	}
 	response, err := newNetworkSessionLifecycle(spy, continuation).Connect(context.Background(), target)
 	var recoveryRequired protectedPreviousGenerationRestoreError
