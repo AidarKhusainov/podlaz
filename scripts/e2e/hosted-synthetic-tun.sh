@@ -65,6 +65,7 @@ if [[ "${PODLAZ_E2E_PROFILE_TRANSITIONS}" == true ]]; then
     transition.a_to_b
     transition.b_to_a
     transition.failed_switch_restored
+    transition.lost_response_committed
     transition.restart_restored
     transition.selection_preserved
   )
@@ -108,6 +109,7 @@ NSPAWN_PID=""
 XRAY_PID=""
 XRAY_PROBE_PID=""
 XRAY_HTTP_PID=""
+TRANSITION_PROXY_PID=""
 SYSTEM_GUEST_ACTIVE=false
 TEARDOWN_RUNNING=false
 FAILURE_CLASS=none
@@ -373,6 +375,11 @@ teardown_all() {
   TEARDOWN_RUNNING=true
   trap - EXIT
   set +e
+  if [[ -n "${TRANSITION_PROXY_PID}" ]]; then
+    kill "${TRANSITION_PROXY_PID}" >/dev/null 2>&1 || true
+    wait "${TRANSITION_PROXY_PID}" >/dev/null 2>&1 || true
+    TRANSITION_PROXY_PID=""
+  fi
   stop_synthetic_xray_endpoint || cleanup_failed=1
   stop_system_guest || cleanup_failed=1
   cleanup_outer_plumbing || cleanup_failed=1
@@ -885,36 +892,22 @@ print(sock.getsockname()[1])
 sock.close()
 PY
 )"
-  local inbound_protocol inbound_settings client_uri credential encoded second_inbound=""
+  local inbound_protocol inbound_settings client_uri credential encoded
   case "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" in
     vless)
       inbound_protocol=vless
       inbound_settings="{\"clients\":[{\"id\":\"${uuid}\"}],\"decryption\":\"none\"}"
       client_uri="vless://${uuid}@${ENDPOINT_IP}:${port}?type=tcp&security=none&encryption=none#hosted-synthetic"
       if [[ "${PODLAZ_E2E_PROFILE_TRANSITIONS}" == true ]]; then
-        # Keep the positive-control A listener byte-for-byte equivalent to
-        # the ordinary synthetic fixture. A separate listener and credential
-        # give B independent transport identity and exercise endpoint handoff.
-        local second_uuid invalid_uuid second_port
+        # Distinct provider credentials make A and B independent profiles
+        # while sharing a deterministic isolated endpoint fixture.
+        local second_uuid invalid_uuid
         second_uuid="$("${extract}/usr/lib/podlaz/xray" uuid | tr -d '[:space:]')"
         invalid_uuid="$("${extract}/usr/lib/podlaz/xray" uuid | tr -d '[:space:]')"
         [[ "${second_uuid}" != "${uuid}" && "${invalid_uuid}" != "${uuid}" && "${invalid_uuid}" != "${second_uuid}" ]] || return 1
-        second_port="$(python3 - "${ENDPOINT_IP}" <<'PY_SECOND_PORT'
-import socket
-import sys
-with socket.socket() as sock:
-    sock.bind((sys.argv[1], 0))
-    print(sock.getsockname()[1])
-PY_SECOND_PORT
-)"
-        [[ "${second_port}" =~ ^[1-9][0-9]*$ && "${second_port}" != "${port}" ]] || return 1
-        second_inbound="$(jq -cn --arg listen "${ENDPOINT_IP}" --argjson port "${second_port}" --arg id "${second_uuid}" '
-          {listen:$listen,port:$port,protocol:"vless",
-           settings:{clients:[{id:$id}],decryption:"none"},streamSettings:{security:"none"}}')"
-        printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic-b\n' \
-          "${second_uuid}" "${ENDPOINT_IP}" "${second_port}" >"${XRAY_ROOT}/second-client-uri"
-        printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic-rejected\n' \
-          "${invalid_uuid}" "${ENDPOINT_IP}" "${second_port}" >"${XRAY_ROOT}/rejected-client-uri"
+        inbound_settings="$(jq -cn --arg first "${uuid}" --arg second "${second_uuid}" '{clients:[{id:$first},{id:$second}],decryption:"none"}')"
+        printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic-b\n'           "${second_uuid}" "${ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/second-client-uri"
+        printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic-rejected\n'           "${invalid_uuid}" "${ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/rejected-client-uri"
         chmod 0600 "${XRAY_ROOT}/second-client-uri" "${XRAY_ROOT}/rejected-client-uri"
       fi
       ;;
@@ -970,12 +963,6 @@ PY_SECOND_PORT
   "outbounds": [{"protocol": "freedom", "settings": {}}]
 }
 EOF_XRAY
-  if [[ -n "${second_inbound}" ]]; then
-    # Add the independent B listener without changing the known-good A one.
-    jq --argjson inbound "${second_inbound}" '.inbounds += [$inbound]' "${config}" >"${config}.next"
-    chmod 0600 "${config}.next"
-    mv "${config}.next" "${config}"
-  fi
   printf '%s\n' "${client_uri}" >"${XRAY_ROOT}/client-uri"
   chmod 0600 "${XRAY_ROOT}/client-uri"
   if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess || "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ]]; then
@@ -1280,6 +1267,51 @@ assert_transition_verified_active() {
   assert_foreign_sentinel
 }
 
+# A local Unix-socket relay proves that a full protected commit can finish
+# successfully even though the initiating CLI never receives its HTTP reply.
+# The relay runs as the same unprivileged user, so authorization is unchanged.
+qualify_lost_lifecycle_response() {
+  local first_selector="$1" second_selector="$2" second_id="$3" session_id="$4" table_id="$5"
+  local dir="${GUEST_PRIVATE}/lifecycle-response-drop" marker="${dir}/committed"
+  local active_tx failed_rc
+
+  guest_exec install -d -o e2e -g e2e -m 0700 "${dir}"
+  guest_exec rm -f "${dir}/podlazd.sock" "${marker}"
+  mark_failure product transition.lost_response_committed
+  guest_exec runuser -u e2e -- python3 /workspace/scripts/e2e/lib/lifecycle_response_drop.py \
+    "${dir}/podlazd.sock" /run/podlaz/podlazd.sock "${marker}" \
+    >"${PRIVATE_ROOT}/lost-response-proxy.stdout" 2>"${PRIVATE_ROOT}/lost-response-proxy.stderr" &
+  TRANSITION_PROXY_PID=$!
+  local attempt
+  for attempt in $(seq 1 300); do
+    if guest_exec test -S "${dir}/podlazd.sock" >/dev/null 2>&1; then break; fi
+    kill -0 "${TRANSITION_PROXY_PID}" >/dev/null 2>&1 || return 1
+    sleep 0.1
+  done
+  guest_exec test -S "${dir}/podlazd.sock" || return 1
+
+  set +e
+  run_guest_user env PODLAZ_RUNTIME_DIR="${dir}" /usr/bin/podlaz connect "${second_selector}" \
+    >"${PRIVATE_ROOT}/lost-response-connect.stdout" 2>"${PRIVATE_ROOT}/lost-response-connect.stderr"
+  failed_rc=$?
+  set -e
+  (( failed_rc != 0 )) || return 1
+  ! grep -Fx 'Connected' "${PRIVATE_ROOT}/lost-response-connect.stdout" >/dev/null || return 1
+  grep -F 'daemon lifecycle outcome unknown' "${PRIVATE_ROOT}/lost-response-connect.stderr" >/dev/null || return 1
+  wait "${TRANSITION_PROXY_PID}" || return 1
+  TRANSITION_PROXY_PID=""
+  guest_exec test -f "${marker}" || return 1
+  assert_transition_verified_active "${second_id}" "${session_id}" "${table_id}"
+  active_tx="$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")"
+  [[ -n "${active_tx}" ]] || return 1
+
+  # The next command observes the committed B generation, then replaces it
+  # with A. It must not replay the lost B mutation or publish a false A no-op.
+  run_guest_user /usr/bin/podlaz connect "${first_selector}" >"${PRIVATE_ROOT}/after-lost-response.stdout" \
+    2>"${PRIVATE_ROOT}/after-lost-response.stderr"
+  record_evidence transition.lost_response_committed pass
+}
+
 qualify_profile_transitions() {
   [[ "${PODLAZ_E2E_PROFILE_TRANSITIONS}" == true ]] || return 0
   [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vless && "${PODLAZ_E2E_GUEST_SUITE}" == noble ]] || return 1
@@ -1353,6 +1385,9 @@ qualify_profile_transitions() {
   (( rejected_rc != 0 )) || return 1
   assert_transition_verified_active "${first_id}" "${session_id}" "${table_id}"
   record_evidence transition.failed_switch_restored pass
+
+  qualify_lost_lifecycle_response "${first_selector}" "${second_selector}" "${second_id}" "${session_id}" "${table_id}"
+  assert_transition_verified_active "${first_id}" "${session_id}" "${table_id}"
 
   mark_failure product transition.restart_restored
   guest_exec systemctl restart podlazd.service
@@ -1498,27 +1533,6 @@ run_scenario() {
     if grep -qiF 'failed to start' "${XRAY_ROOT}/server.log"; then
       printf 'hysteria-server-class=start_failed\\n'
     fi
-  fi
-  if (( connect_code != 0 )) && [[ "${PODLAZ_E2E_PROFILE_TRANSITIONS}" == true ]]; then
-    # Only a fixed classification enters the public report; the daemon,
-    # status, core and command diagnostics remain guest/runner-private.
-    local failure_class="unclassified"
-    if guest_exec grep -Eqi 'could not verify DNS|uncached DNS|system resolver|DNS through the VPN' "${GUEST_PRIVATE}/connect.stderr"; then
-      failure_class="dns-verification"
-    elif guest_exec grep -Eqi 'could not verify full-VPN|connectivity probe|route lookup' "${GUEST_PRIVATE}/connect.stderr"; then
-      failure_class="connectivity-verification"
-    elif guest_exec grep -Eqi 'network session|recovery|rollback' "${GUEST_PRIVATE}/connect.stderr"; then
-      failure_class="network-session"
-    elif guest_exec grep -Eqi 'Xray|core|runtime' "${GUEST_PRIVATE}/connect.stderr"; then
-      failure_class="core-runtime"
-    elif guest_exec grep -Eqi 'conflict|already active|default DNS' "${GUEST_PRIVATE}/connect.stderr"; then
-      failure_class="conflict"
-    elif guest_exec grep -Eqi 'timeout|deadline|canceled' "${GUEST_PRIVATE}/connect.stderr"; then
-      failure_class="deadline"
-    elif guest_exec grep -Eqi 'permission|authorized|polkit' "${GUEST_PRIVATE}/connect.stderr"; then
-      failure_class="authorization"
-    fi
-    mark_failure diagnostic_unknown "tun.connect.${failure_class}"
   fi
   (( connect_code == 0 )) || return "${connect_code}"
   wait_guest_status verified-active 120
