@@ -25,7 +25,11 @@ class UnixConnection(http.client.HTTPConnection):
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
-        self.sock.connect(self.socket_path)
+        # Packaged ordinary users use the Polkit-gated abstract Unix socket,
+        # not the root-owned filesystem listener. The daemon still observes
+        # the relay's unprivileged peer credentials.
+        address = (chr(0) + self.socket_path[1:]) if self.socket_path.startswith("@") else self.socket_path
+        self.sock.connect(address)
 
 
 class RelayServer(socketserver.UnixStreamServer):

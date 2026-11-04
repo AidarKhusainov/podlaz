@@ -1279,7 +1279,7 @@ qualify_lost_lifecycle_response() {
   guest_exec rm -f "${dir}/podlazd.sock" "${marker}"
   mark_failure product transition.lost_response_committed
   guest_exec runuser -u e2e -- python3 /workspace/scripts/e2e/lib/lifecycle_response_drop.py \
-    "${dir}/podlazd.sock" /run/podlaz/podlazd.sock "${marker}" \
+    "${dir}/podlazd.sock" @podlazd "${marker}" \
     >"${PRIVATE_ROOT}/lost-response-proxy.stdout" 2>"${PRIVATE_ROOT}/lost-response-proxy.stderr" &
   TRANSITION_PROXY_PID=$!
   local attempt
