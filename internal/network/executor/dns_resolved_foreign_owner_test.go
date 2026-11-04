@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,11 @@ Current DNS Server: 198.51.100.53
 	if err == nil {
 		t.Fatal("expected foreign route-only DNS owner failure")
 	}
-	if !strings.Contains(err.Error(), "foreign route-only DNS owner wlan0 still has ~.") {
+	var ownership *DefaultDNSOwnershipError
+	if !errors.As(err, &ownership) || ownership.Unknown || ownership.Link != "wlan0" {
+		t.Fatalf("expected typed foreign DNS ownership conflict, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "default DNS (~.)") {
 		t.Fatalf("expected foreign route-only DNS owner failure, got %v", err)
 	}
 	if strings.Contains(err.Error(), "link status not found") {

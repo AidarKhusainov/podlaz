@@ -61,6 +61,13 @@ func (e DNSAwareTunExecutor) ApplyWithStepSink(ctx context.Context, plan planner
 	if err := e.validate(plan); err != nil {
 		return nil, err
 	}
+	// The first real network mutation must not rely on an earlier diagnostic
+	// snapshot: resolved ownership may have changed since connect preflight.
+	if shouldApplyDNS(plan.DNS) {
+		if err := checkDNSOwnershipBeforeMutation(ctx, e.DNS, plan.DNS.TargetLink); err != nil {
+			return nil, withApplyFailureSubphase(applyFailureSubphaseDNS, err)
+		}
+	}
 	steps, err := e.Base.ApplyWithStepSink(ctx, plan, sink)
 	if err != nil {
 		return steps, err
@@ -71,6 +78,12 @@ func (e DNSAwareTunExecutor) ApplyWithStepSink(ctx context.Context, plan planner
 		return errors.Join(applyErr, persistErr)
 	}
 	if shouldApplyDNS(plan.DNS) {
+		// A foreign owner may appear while routes and rules are being applied.
+		// Refuse a new resolved mutation and let the transaction roll back only
+		// the already-persisted Podlaz resources.
+		if err := checkDNSOwnershipBeforeMutation(ctx, e.DNS, plan.DNS.TargetLink); err != nil {
+			return steps, withApplyFailureSubphase(applyFailureSubphaseDNS, err)
+		}
 		dnsStep, applyErr := e.DNS.Apply(ctx, plan.DNS)
 		if err := record(dnsStep, withApplyFailureSubphase(applyFailureSubphaseDNS, applyErr)); err != nil {
 			return steps, err
@@ -83,6 +96,15 @@ func (e DNSAwareTunExecutor) ApplyWithStepSink(ctx context.Context, plan planner
 		}
 	}
 	return steps, nil
+}
+
+func checkDNSOwnershipBeforeMutation(ctx context.Context, dns DNSExecutor, targetLink string) error {
+	if observer, ok := dns.(interface {
+		CheckDefaultDNSOwnership(context.Context, string) error
+	}); ok {
+		return observer.CheckDefaultDNSOwnership(ctx, targetLink)
+	}
+	return nil
 }
 
 func isAppliedStep(step Step) bool {
@@ -265,11 +287,11 @@ func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan
 func (e ResolvedDNSExecutor) verifyResolvedDNSOnce(ctx context.Context, link string, plan planner.TunDNSPlan) error {
 	result, err := observeCommand(ctx, e.Runner, "resolvectl", "status", "--no-pager")
 	if err != nil {
-		return fmt.Errorf("verify systemd-resolved DNS for %s: %w", link, err)
+		return &DefaultDNSOwnershipError{Unknown: true}
 	}
-	links := netsnapshot.ParseResolvedLinks(result.Stdout)
-	if foreign, ok := findForeignRouteOnlyDNSOwner(links, link); ok {
-		return newResolvedDNSVerifyError(link, false, "foreign route-only DNS owner %s still has %s", foreign.Name, resolvedRouteOnlyDomain)
+	links, ownershipErr := checkDefaultDNSOwnershipStatus(result.Stdout, link)
+	if ownershipErr != nil {
+		return ownershipErr
 	}
 	targetLinks := findResolvedLinks(links, link)
 	if len(targetLinks) == 0 {

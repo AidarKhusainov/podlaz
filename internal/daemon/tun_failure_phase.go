@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 )
 
 const noTunTransactionID = "none"
@@ -18,10 +20,37 @@ type tunFailurePhaseError struct {
 }
 
 func (e tunFailurePhaseError) Error() string {
+	var ownership *netexecutor.DefaultDNSOwnershipError
+	if errors.As(e.err, &ownership) {
+		return dnsOwnershipConnectFailureMessage(ownership, e.rollbackStatus)
+	}
 	if e.err == nil {
 		return "podlaz: TUN connect failed"
 	}
 	return e.err.Error()
+}
+
+// The public error must describe what actually happened to the candidate
+// transaction, without leaking foreign resolver configuration or internal
+// rollback evidence. Incomplete cleanup must never be called rolled back.
+func dnsOwnershipConnectFailureMessage(ownership *netexecutor.DefaultDNSOwnershipError, rollbackStatus string) string {
+	var message strings.Builder
+	message.WriteString("Unable to connect.\n\n")
+	if ownership.Unknown {
+		message.WriteString("Podlaz could not verify who controls default DNS (~.).\n")
+	} else {
+		message.WriteString("Another VPN or network service controls default DNS (~.).\n")
+	}
+	switch rollbackStatus {
+	case "not-started":
+		message.WriteString("No new Podlaz VPN connection changes were applied.\n")
+	case "completed":
+		message.WriteString("The attempted Podlaz-owned network changes were rolled back.\n")
+	default:
+		message.WriteString("Podlaz-owned network cleanup is incomplete; protection may remain armed.\n")
+	}
+	message.WriteString("\nRestore exclusive default DNS ownership before retrying.\nRun:\n  podlaz debug doctor --tun\n  podlaz debug recover")
+	return message.String()
 }
 
 func (e tunFailurePhaseError) Unwrap() error {

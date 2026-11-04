@@ -64,7 +64,7 @@ func issue260ForeignBaseline() netsnapshot.Snapshot {
 		Protocols:        []string{"+DefaultRoute"},
 		CurrentDNSServer: "198.51.100.53",
 		DNSServers:       []string{"198.51.100.53"},
-		DNSDomains:       []string{"~."},
+		DNSDomains:       []string{"~corp.example.invalid"},
 	})
 	rule := netsnapshot.PolicyRoutingSignal{Kind: "rule", Priority: "100", Selector: "from all", Table: "60000", Raw: "100: from all lookup 60000"}
 	s.PolicyRouting = append(s.PolicyRouting, rule)

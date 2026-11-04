@@ -70,6 +70,14 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 
 	snapshotOpts := netsnapshot.Options{Server: p.Server}
 	snapshot := m.collectTunResourceSnapshot(ctx, snapshotOpts)
+	// A proven competing ~. owner blocks immediately. Missing/unsupported
+	// resolved remains subject to the existing, more specific DNS planner
+	// preflight, which also refuses mutation before active handoff.
+	if snapshot.DNS.Resolved.Status == netsnapshot.StatusDetected {
+		if err := netexecutor.CheckDefaultDNSOwnershipSnapshot(snapshot.DNS, netsnapshot.DefaultTunName); err != nil {
+			return api.LifecycleResponse{}, withTunFailurePhase("dns-ownership-preflight", "", "not-started", err)
+		}
+	}
 	allocationEvidence, err := m.collectTunAllocationEvidence(ctx, snapshot)
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
@@ -165,6 +173,11 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 	m.mu.Unlock()
 
 	snapshot = m.collectTunResourceSnapshot(ctx, snapshotOpts)
+	// The previously clean observation cannot authorize a recovery mutation
+	// after ownership has changed in the meantime.
+	if err := netexecutor.CheckDefaultDNSOwnershipSnapshot(snapshot.DNS, netsnapshot.DefaultTunName); err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("dns-ownership-preflight", "", "not-started", err)
+	}
 	snapshot, err = m.autoRecoverTunOwnedState(ctx, snapshot, req.Handoff, snapshotOpts)
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("recovery", "", "not-started", err)
@@ -206,6 +219,12 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 		executor:   executor,
 		now:        time.Now,
 		preflightCore: func(preflightCtx context.Context) error {
+			// Fresh read-only observation before opening a transaction. The DNS
+			// executor will fence again immediately before host-network apply.
+			current := m.collectTunResourceSnapshot(preflightCtx, snapshotOpts)
+			if err := netexecutor.CheckDefaultDNSOwnershipSnapshot(current.DNS, plan.DNS.TargetLink); err != nil {
+				return err
+			}
 			return preflightTunRuntimeConfig(preflightCtx, xrayPath, preflightConfigPath, runtimePreflightConfig, coreIdentity)
 		},
 		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
