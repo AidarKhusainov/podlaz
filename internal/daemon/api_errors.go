@@ -68,6 +68,13 @@ func daemonAPIInternal(err error) error {
 }
 
 func daemonAPIHTTPStatusCode(err error) int {
+	// Exact protected cleanup failure dominates any original preflight
+	// conflict. Reporting 409 could incorrectly suggest a safe retry while
+	// rollback authority remains unresolved.
+	var cleanup protectedReplacementCleanupError
+	if errors.As(err, &cleanup) {
+		return http.StatusServiceUnavailable
+	}
 	var ownership *netexecutor.DefaultDNSOwnershipError
 	if errors.As(err, &ownership) {
 		if ownership.Unknown {
@@ -84,8 +91,7 @@ func daemonAPIHTTPStatusCode(err error) int {
 		isTunHandoffBlocker(err) || isTunStalePodlazStateBlocker(err) {
 		return http.StatusConflict
 	}
-	var cleanup protectedReplacementCleanupError
-	if errors.As(err, &cleanup) || errors.Is(err, errNetworkSessionStartupRecoveryPending) ||
+	if errors.Is(err, errNetworkSessionStartupRecoveryPending) ||
 		errors.Is(err, errLifecycleShuttingDown) || isRuntimeUnavailableError(err) ||
 		isRuntimeResolutionError(err) || isTunVerificationError(err) {
 		return http.StatusServiceUnavailable

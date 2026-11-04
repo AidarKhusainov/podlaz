@@ -78,11 +78,23 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 		return response, nil
 	}
 	if replacementAttempt {
+		// The full-TUN runner may finish transaction rollback while the
+		// protected barrier's separate exact reconciliation still fails.
+		// A completed transaction alone does not prove safe restoration of
+		// the previous generation or permit erasing replacement authority.
+		var incomplete protectedReplacementCleanupError
 		_, _, rollbackStatus := tunFailureLogFields(connectErr)
-		if rollbackStatus == "failed" {
-			// Incomplete candidate rollback must retain exact replacement and
-			// Privacy Envelope authority. Never start the old data plane over
-			// ambiguous candidate resources.
+		if errors.As(connectErr, &incomplete) || rollbackStatus == "failed" {
+			return response, protectedReplacementCleanupError{cause: connectErr}
+		}
+		state, exists, stateErr := l.continuation.stateStore().Load()
+		if stateErr != nil || !exists {
+			return response, protectedReplacementCleanupError{cause: errors.Join(connectErr, stateErr)}
+		}
+		// A positively identified preflight failure happens before mutation.
+		// Otherwise, a still-pending replacement must first be converged by
+		// its exact privacy rollback, not blindly restored from metadata.
+		if state.Replacement != nil && rollbackStatus != "not-started" {
 			return response, protectedReplacementCleanupError{cause: connectErr}
 		}
 	}

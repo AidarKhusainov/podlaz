@@ -322,3 +322,88 @@ func TestSerializedConnectsUsePostAdmissionStateForNoOpAndConflict(t *testing.T)
 		})
 	}
 }
+
+// Unknown failure after entering protected replacement cannot erase pending
+// durable rollback authority or start the old generation over candidate state.
+func TestUnknownProtectedReplacementFailureWithPendingAuthorityFailsClosed(t *testing.T) {
+	continuation := newNetworkSessionContinuationStore(t.TempDir(), fixedBootID("boot-a"))
+	previous := testContinuationRequest()
+	if err := continuation.Save(previous); err != nil {
+		t.Fatal(err)
+	}
+	protection := testArmedPrivacyProtection()
+	if err := continuation.stateStore().SetProtection(&protection); err != nil {
+		t.Fatal(err)
+	}
+	target := previous
+	target.Profile.ID = "replacement"
+	target.Profile.Server = "replacement.example.test"
+	target.Handoff = api.HandoffReplacePodlaz
+	spy := &incompleteReplacementSpy{cause: errors.New("candidate outcome unknown")}
+	_, err := newNetworkSessionLifecycle(spy, continuation).Connect(context.Background(), target)
+	var blocked protectedReplacementCleanupError
+	if !errors.As(err, &blocked) || daemonAPIHTTPStatusCode(err) != 503 {
+		t.Fatalf("unknown candidate outcome returned non-cleanup error: %v", err)
+	}
+	if len(spy.calls) != 1 || spy.calls[0] != target.Profile.ID {
+		t.Fatalf("started previous core with pending candidate: %#v", spy.calls)
+	}
+	state, exists, loadErr := continuation.stateStore().Load()
+	if loadErr != nil || !exists || state.Replacement == nil || state.Protection == nil {
+		t.Fatalf("pending protected rollback authority missing: state=%#v err=%v", state, loadErr)
+	}
+}
+
+type protectedPrivacyFailureSpy struct {
+	calls []string
+	err   error
+}
+
+func (s *protectedPrivacyFailureSpy) Connect(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+	s.calls = append(s.calls, req.Profile.ID)
+	return api.LifecycleResponse{}, s.err
+}
+
+func (s *protectedPrivacyFailureSpy) Disconnect(context.Context) (api.LifecycleResponse, error) {
+	return api.LifecycleResponse{}, nil
+}
+
+// Exact barrier cleanup can fail even when the transaction rollback completed
+// or when a later stage is labelled "not-started". Neither permits a reconnect.
+func TestIncompletePrivacyReconciliationDominatesCompletedTransactionAndPreflight(t *testing.T) {
+	for _, phase := range []string{"completed", "not-started"} {
+		t.Run(phase, func(t *testing.T) {
+			continuation := newNetworkSessionContinuationStore(t.TempDir(), fixedBootID("boot-a"))
+			previous := testContinuationRequest()
+			if err := continuation.Save(previous); err != nil {
+				t.Fatal(err)
+			}
+			protection := testArmedPrivacyProtection()
+			if err := continuation.stateStore().SetProtection(&protection); err != nil {
+				t.Fatal(err)
+			}
+			target := previous
+			target.Profile.ID = "target"
+			target.Handoff = api.HandoffReplacePodlaz
+			private := errors.New("private failed nft composition")
+			cause := protectedReplacementCleanupError{
+				cause: withTunFailurePhase("network-apply", "tx-a", phase, private),
+			}
+			spy := &protectedPrivacyFailureSpy{err: cause}
+			_, err := newNetworkSessionLifecycle(spy, continuation).Connect(context.Background(), target)
+			if !errors.Is(err, private) || daemonAPIHTTPStatusCode(err) != 503 {
+				t.Fatalf("incomplete privacy reconciliation was downgraded: %v", err)
+			}
+			if len(spy.calls) != 1 {
+				t.Fatalf("previous data-plane started over incomplete barrier: %#v", spy.calls)
+			}
+			if strings.Contains(err.Error(), "private failed nft") {
+				t.Fatalf("sanitized HTTP error exposed private cleanup details: %v", err)
+			}
+			state, exists, loadErr := continuation.stateStore().Load()
+			if loadErr != nil || !exists || state.Replacement == nil || state.Protection == nil {
+				t.Fatalf("lost durable barrier reconciliation authority: state=%#v err=%v", state, loadErr)
+			}
+		})
+	}
+}

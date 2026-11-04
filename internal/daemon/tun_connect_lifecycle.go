@@ -152,7 +152,10 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
 		defer cancel()
 		if cleanupErr := replacementLifecycle.CleanupAfterFailedDataPlane(cleanupCtx); cleanupErr != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("restore previous protected Network Session: %w", cleanupErr))
+			// Network rollback and exact privacy-barrier reconciliation are
+			// separate convergence obligations. A failed latter step must
+			// take precedence over an otherwise completed transaction.
+			retErr = protectedReplacementCleanupError{cause: errors.Join(retErr, fmt.Errorf("restore previous protected Network Session: %w", cleanupErr))}
 		}
 	}()
 
