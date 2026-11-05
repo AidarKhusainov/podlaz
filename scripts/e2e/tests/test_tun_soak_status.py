@@ -26,12 +26,10 @@ class TunSoakStatusTests(unittest.TestCase):
         tun_base: str = "enabled (podlaz0)",
     ) -> str:
         del generation, classification
-        mode = "tun"
-        if tun_base != "enabled (podlaz0)":
-            mode = "proxy-only"
+        protection = "Active" if tun_base == "enabled (podlaz0)" else "Proxy only"
         if connection == "inactive":
             product_state = "Disconnected"
-            mode = ""
+            protection = ""
         elif connection.startswith("active (revalidating:") or connection.startswith("active (degraded:"):
             product_state = "Reconnecting"
         elif connection.startswith("active (cleanup-required:"):
@@ -43,8 +41,8 @@ class TunSoakStatusTests(unittest.TestCase):
         else:
             product_state = "Unknown"
         lines = [f"Status: {product_state}", "Profile: Example VPN"]
-        if mode:
-            lines.append(f"Mode: {mode}")
+        if protection:
+            lines.append(f"Protection: {protection}")
         lines.append("Autostart: Disabled")
         return "\n".join(lines) + "\n"
 
@@ -102,17 +100,53 @@ class TunSoakStatusTests(unittest.TestCase):
         self.assertEqual("retry-revalidating", tun_soak_status.classify_status(revalidating, exit_code=0))
         self.assertEqual("invalid-status", tun_soak_status.classify_status(verified, exit_code=3))
 
-    def test_fails_closed_on_duplicate_or_wrong_mode_structural_fields(self) -> None:
+    def test_fails_closed_on_duplicate_or_missing_protection(self) -> None:
         verified = self.status_output(connection="active", state="verified", generation=1)
-        duplicate = verified + "Status: Connected\n"
-        wrong_mode = self.status_output(
-            connection="active",
-            state="verified",
-            generation=1,
-            tun_base="disabled",
+        duplicate_state = verified + "Status: Connected\\n"
+        duplicate_protection = verified + "Protection: Active\\n"
+        missing_protection = verified.replace("Protection: Active\\n", "")
+        legacy_mode_only = missing_protection + "Mode: tun\\n"
+        conflicting_mode = verified + "Mode: proxy-only\\n"
+        proxy_only = self.status_output(
+            connection="active", state="verified", tun_base="disabled",
         )
-        self.assertEqual("invalid-status", tun_soak_status.classify_status(duplicate, exit_code=0))
-        self.assertEqual("invalid-status", tun_soak_status.classify_status(wrong_mode, exit_code=0))
+        for observation in (
+            duplicate_state, duplicate_protection, missing_protection,
+            legacy_mode_only, conflicting_mode, proxy_only,
+        ):
+            with self.subTest(observation=observation):
+                self.assertEqual(
+                    "invalid-status",
+                    tun_soak_status.classify_status(observation, exit_code=0),
+                )
+
+    def test_proxy_only_and_unknown_never_claim_tun_health(self) -> None:
+        for state, code in (("Connected", 0), ("Connecting", 0), ("Reconnecting", 3)):
+            with self.subTest(state=state):
+                output = f"Status: {state}\\nProtection: Proxy only\\n"
+                self.assertEqual(
+                    "invalid-status", tun_soak_status.classify_status(output, exit_code=code),
+                )
+        self.assertEqual(
+            "invalid-status",
+            tun_soak_status.classify_status("Status: Unknown\\n", exit_code=3),
+        )
+
+    def test_rejects_protection_when_disconnected_and_invalid_exit_codes(self) -> None:
+        disconnected = "Status: Disconnected\\nProtection: Active\\n"
+        verified = self.status_output(connection="active", state="verified")
+        self.assertEqual(
+            "invalid-status", tun_soak_status.classify_status(disconnected, exit_code=0),
+        )
+        for code in (-1, 256, 3):
+            with self.subTest(exit_code=code):
+                self.assertEqual(
+                    "invalid-status",
+                    tun_soak_status.classify_status(verified, exit_code=code),
+                )
+        self.assertEqual(
+            "command-error", tun_soak_status.classify_status(verified, exit_code=5),
+        )
 
     def test_fails_closed_on_unknown_health_or_unbounded_output(self) -> None:
         unknown = self.status_output(connection="active", state="future-state", generation=1)
@@ -240,6 +274,20 @@ printf 'failure=%s\\n' "${FAIL_MESSAGE}"
         self.assertIn("calls=2", result.stdout)
         self.assertIn("verdict=", result.stdout)
         self.assertNotIn("uplink_revalidating", result.stdout)
+
+    def test_shell_wait_accepts_current_connected_protection(self) -> None:
+        verified = self.status_output(connection="active", state="verified")
+        result = self.run_shell_wait([(verified, 0, "")])
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("result=0", result.stdout)
+        self.assertIn("calls=1", result.stdout)
+
+    def test_shell_wait_rejects_proxy_only_protection(self) -> None:
+        proxy = self.status_output(connection="active", state="verified", tun_base="disabled")
+        result = self.run_shell_wait([(proxy, 0, "")])
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("result=1", result.stdout)
+        self.assertIn("verdict=invalid-status", result.stdout)
 
     def test_shell_wait_fails_closed_on_cleanup_required(self) -> None:
         cleanup_required = self.status_output(
