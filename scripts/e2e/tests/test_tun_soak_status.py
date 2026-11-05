@@ -40,6 +40,8 @@ class TunSoakStatusTests(unittest.TestCase):
             product_state = "Connecting"
         else:
             product_state = "Unknown"
+        if product_state == "Unknown":
+            protection = ""
         lines = [f"Status: {product_state}", "Profile: Example VPN"]
         if protection:
             lines.append(f"Protection: {protection}")
