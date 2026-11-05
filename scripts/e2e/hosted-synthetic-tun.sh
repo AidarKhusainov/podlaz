@@ -1042,6 +1042,8 @@ qualify_explicit_proxy_only() {
   run_guest_user /usr/bin/podlaz status >"${PRIVATE_ROOT}/proxy-status.stdout" 2>"${PRIVATE_ROOT}/proxy-status.stderr"
   grep -Fx 'Status: Connected' "${PRIVATE_ROOT}/proxy-status.stdout" >/dev/null
   grep -Fx 'Protection: Proxy only' "${PRIVATE_ROOT}/proxy-status.stdout" >/dev/null
+  [[ "$(python3 "${REPO_ROOT}/scripts/e2e/lib/tun_soak_status.py" classify \
+    --stdout-file "${PRIVATE_ROOT}/proxy-status.stdout" --exit-code 0)" == "invalid-status" ]]
   # Verify the reduced-protection mode does not acquire any privileged
   # TUN/route/rule/DNS/firewall or NetworkManager state while active.
   assert_guest_network_baseline_restored
@@ -1539,6 +1541,11 @@ run_scenario() {
   wait_guest_status verified-active 120
   mark_failure diagnostic_unknown tun.authority
   assert_verified_active_authority
+  # Exercise the actual installed CLI product status through the same strict
+  # classifier used by the resource-soak precondition, without starting a soak.
+  run_guest_user /usr/bin/podlaz status >"${PRIVATE_ROOT}/tun-status.stdout" 2>"${PRIVATE_ROOT}/tun-status.stderr"
+  [[ "$(python3 "${REPO_ROOT}/scripts/e2e/lib/tun_soak_status.py" classify \
+    --stdout-file "${PRIVATE_ROOT}/tun-status.stdout" --exit-code 0)" == "verified" ]]
   record_evidence tun.verified_active pass
   qualify_systemd259_active_resolved
   hosted_control_pause verified-active
