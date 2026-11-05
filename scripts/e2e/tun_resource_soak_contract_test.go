@@ -2,8 +2,13 @@ package e2e_test
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	productstatus "github.com/AidarKhusainov/podlaz/internal/status"
 )
 
 func TestTunResourceSoakPreservesLifecycleAndPrivacyBoundaries(t *testing.T) {
@@ -52,5 +57,42 @@ func TestTunResourceSoakPreservesLifecycleAndPrivacyBoundaries(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Fatalf("TUN resource soak lost %q", required)
 		}
+	}
+}
+
+func TestTunSoakStatusClassifierMatchesCurrentProductView(t *testing.T) {
+	cases := []struct {
+		name     string
+		view     productstatus.ProductStatusView
+		exitCode int
+		want     string
+	}{
+		{"verified-tun", productstatus.ProductStatusView{State: productstatus.ProductConnected, ProfileName: "Example VPN", Protection: "Active", AutostartKnown: true}, 0, "verified"},
+		{"proxy-only", productstatus.ProductStatusView{State: productstatus.ProductConnected, ProfileName: "Example VPN", Protection: "Proxy only"}, 0, "invalid-status"},
+		{"connecting", productstatus.ProductStatusView{State: productstatus.ProductConnecting, ProfileName: "Example VPN", Protection: "Active"}, 0, "retry-initializing"},
+		{"reconnecting", productstatus.ProductStatusView{State: productstatus.ProductReconnecting, ProfileName: "Example VPN", Protection: "Active"}, 3, "retry-revalidating"},
+		{"unknown", productstatus.ProductStatusView{State: productstatus.ProductUnknown, Reason: "Connection state could not be determined"}, 3, "invalid-status"},
+		{"disconnected", productstatus.ProductStatusView{State: productstatus.ProductDisconnected, AutostartKnown: true}, 0, "terminal-inactive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout := tc.view.String()
+			if strings.Contains(stdout, "Mode: ") {
+				t.Fatal("production product view unexpectedly exposes legacy Mode field")
+			}
+			path := filepath.Join(t.TempDir(), "private-status.stdout")
+			if err := os.WriteFile(path, []byte(stdout), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("python3", "lib/tun_soak_status.py", "classify",
+				"--stdout-file", path, "--exit-code", strconv.Itoa(tc.exitCode))
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("status classifier failed: %v; output=%q", err, output)
+			}
+			if got := strings.TrimSpace(string(output)); got != tc.want {
+				t.Fatalf("classifier verdict=%q, want %q", got, tc.want)
+			}
+		})
 	}
 }
