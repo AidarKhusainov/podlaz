@@ -141,6 +141,52 @@ print("pinned-v029-diagnostic.category=" + category)
 print("pinned-v029-diagnostic.status_snapshot=" + ("present" if status else "absent"))
 print("pinned-v029-diagnostic.lifecycle_phase=" + phase_code)
 print("pinned-v029-diagnostic.resume_snapshot=" + ("present" if resume else "absent"))
+# Publish only fixed, privacy-safe enum values already represented by the
+# production status/replay contract. Do not log raw status or failure records.
+scan = status.get("startup_scan")
+session = scan.get("network_session") if isinstance(scan, dict) else {}
+if not isinstance(session, dict):
+    session = {}
+health = status.get("tun_health")
+if not isinstance(health, dict):
+    health = {}
+
+def emit(name, value, allowed_values):
+    safe = value if isinstance(value, str) and value in allowed_values else "unknown"
+    print("pinned-v029-diagnostic." + name + "=" + safe)
+
+def diagnostic_value(key, session_key=None):
+    value = resume.get(key)
+    if value is None:
+        value = session.get(session_key or key)
+    return value
+
+stages = {"state-load", "legacy-migration", "privacy-reconcile", "exact-recovery", "generic-recovery", "connect-replay", "terminal-teardown"}
+outcomes = {"not-attempted", "failed", "incomplete", "succeeded"}
+phases = {"preflight", "network-apply", "network-verify", "resolved-link-query-verify", "core-start", "core-exited", "none"}
+dispositions = {"terminal", "retryable", "interrupted", "incomplete"}
+subphases = {"tun-address", "routes", "policy-rules", "dns", "nftables"}
+rollbacks = {"not-started", "completed", "failed", "unknown"}
+dns_causes = {"invalid-input", "command-timeout", "command-unavailable", "command-failure", "output-too-large", "unexpected-stderr", "link-not-matched", "no-ipv4", "identity-changed"}
+emit("connection", status.get("connection"), {"active", "inactive", "error (core exited)", "error (network session cleanup pending)"})
+emit("tun_health", health.get("state"), {"verified", "revalidating", "degraded", "cleanup-required", "unknown"})
+emit("startup_gate", session.get("startup_gate"), {"open", "blocked"})
+emit("resume_stage", diagnostic_value("resume_stage"), stages)
+emit("resume_outcome", diagnostic_value("last_resume_outcome"), outcomes)
+emit("failure_phase", diagnostic_value("tun_failure_phase", "last_tun_failure_phase"), phases)
+emit("replay_disposition", diagnostic_value("replay_disposition"), dispositions)
+emit("network_apply_subphase", diagnostic_value("network_apply_subphase"), subphases)
+emit("rollback_status", diagnostic_value("rollback_status"), rollbacks)
+emit("next_action", session.get("next_action"), {"none", "retry-resume", "continue-teardown", "manual-diagnosis"})
+for name in ("originating", "current"):
+    attempt = resume.get(name)
+    if not isinstance(attempt, dict):
+        attempt = {}
+    emit(name + "_stage", attempt.get("resume_stage"), stages)
+    emit(name + "_phase", attempt.get("tun_failure_phase"), phases)
+    emit(name + "_disposition", attempt.get("replay_disposition"), dispositions)
+    emit(name + "_dns_scope_cause", attempt.get("dns_failure_cause")
+         if attempt.get("tun_failure_phase") == "resolved-link-query-verify" else None, dns_causes)
 PY_DIAGNOSTIC
   return 1
 }
