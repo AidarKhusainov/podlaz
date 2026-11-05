@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+  # Temporary branch-only, single-job installed diagnostic. No PR matrix.
+  push:
+    branches:
+      - diagnostics/pinned-legacy-upgrade-convergence
 
 permissions:
   contents: read
@@ -22,6 +26,7 @@ env:
 jobs:
   maintained-previous-release:
     name: Maintained previous-release upgrade
+    if: ${{ github.event_name != 'push' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
