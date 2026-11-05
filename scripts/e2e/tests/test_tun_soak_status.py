@@ -102,11 +102,11 @@ class TunSoakStatusTests(unittest.TestCase):
 
     def test_fails_closed_on_duplicate_or_missing_protection(self) -> None:
         verified = self.status_output(connection="active", state="verified", generation=1)
-        duplicate_state = verified + "Status: Connected\\n"
-        duplicate_protection = verified + "Protection: Active\\n"
-        missing_protection = verified.replace("Protection: Active\\n", "")
-        legacy_mode_only = missing_protection + "Mode: tun\\n"
-        conflicting_mode = verified + "Mode: proxy-only\\n"
+        duplicate_state = verified + "Status: Connected\n"
+        duplicate_protection = verified + "Protection: Active\n"
+        missing_protection = verified.replace("Protection: Active\n", "")
+        legacy_mode_only = missing_protection + "Mode: tun\n"
+        conflicting_mode = verified + "Mode: proxy-only\n"
         proxy_only = self.status_output(
             connection="active", state="verified", tun_base="disabled",
         )
@@ -123,17 +123,17 @@ class TunSoakStatusTests(unittest.TestCase):
     def test_proxy_only_and_unknown_never_claim_tun_health(self) -> None:
         for state, code in (("Connected", 0), ("Connecting", 0), ("Reconnecting", 3)):
             with self.subTest(state=state):
-                output = f"Status: {state}\\nProtection: Proxy only\\n"
+                output = f"Status: {state}\nProtection: Proxy only\n"
                 self.assertEqual(
                     "invalid-status", tun_soak_status.classify_status(output, exit_code=code),
                 )
         self.assertEqual(
             "invalid-status",
-            tun_soak_status.classify_status("Status: Unknown\\n", exit_code=3),
+            tun_soak_status.classify_status("Status: Unknown\n", exit_code=3),
         )
 
     def test_rejects_protection_when_disconnected_and_invalid_exit_codes(self) -> None:
-        disconnected = "Status: Disconnected\\nProtection: Active\\n"
+        disconnected = "Status: Disconnected\nProtection: Active\n"
         verified = self.status_output(connection="active", state="verified")
         self.assertEqual(
             "invalid-status", tun_soak_status.classify_status(disconnected, exit_code=0),
