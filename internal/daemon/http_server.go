@@ -189,11 +189,7 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 		log.Printf("podlazd: recover request handled")
 	})
 	registerBootAutostartHandlers(mux, manifestStore, runtime.authorizer)
-	registerLifecycleHandlers(mux, productPhaseLifecycle{
-		inner:           runtime.startupMutationGate,
-		tracker:         runtime.productPhase,
-		terminalReasons: &runtime.productTerminalReasons,
-	}, runtime.authorizer)
+	registerLifecycleHandlers(mux, runtime.startupMutationGate, runtime.authorizer)
 
 	return &http.Server{
 		Handler: mux,

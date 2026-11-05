@@ -35,6 +35,7 @@ HOSTED_CONTROL_TIMEOUT_SECONDS="${PODLAZ_E2E_HOSTED_CONTROL_TIMEOUT_SECONDS:-180
 HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active terminal-clean}"
 HOSTED_EXPECT_CONNECT_FAILURE="${PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE:-false}"
 PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
+PODLAZ_E2E_PROFILE_TRANSITIONS="${PODLAZ_E2E_PROFILE_TRANSITIONS:-false}"
 PODLAZ_E2E_GUEST_SUITE="${PODLAZ_E2E_GUEST_SUITE:-noble}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
 
@@ -55,6 +56,20 @@ EVIDENCE_KEYS=(
   outer.cleanup
   artifact.privacy
 )
+
+if [[ "${PODLAZ_E2E_PROFILE_TRANSITIONS}" == true ]]; then
+  EVIDENCE_KEYS+=(
+    transition.second_profile
+    transition.repeated_connect
+    transition.concurrent_connects
+    transition.a_to_b
+    transition.b_to_a
+    transition.failed_switch_restored
+    transition.lost_response_committed
+    transition.restart_restored
+    transition.selection_preserved
+  )
+fi
 
 if [[ "${PODLAZ_E2E_GUEST_SUITE}" == resolute ]]; then
   EVIDENCE_KEYS+=(
@@ -94,6 +109,7 @@ NSPAWN_PID=""
 XRAY_PID=""
 XRAY_PROBE_PID=""
 XRAY_HTTP_PID=""
+TRANSITION_PROXY_PID=""
 SYSTEM_GUEST_ACTIVE=false
 TEARDOWN_RUNNING=false
 FAILURE_CLASS=none
@@ -359,6 +375,11 @@ teardown_all() {
   TEARDOWN_RUNNING=true
   trap - EXIT
   set +e
+  if [[ -n "${TRANSITION_PROXY_PID}" ]]; then
+    kill "${TRANSITION_PROXY_PID}" >/dev/null 2>&1 || true
+    wait "${TRANSITION_PROXY_PID}" >/dev/null 2>&1 || true
+    TRANSITION_PROXY_PID=""
+  fi
   stop_synthetic_xray_endpoint || cleanup_failed=1
   stop_system_guest || cleanup_failed=1
   cleanup_outer_plumbing || cleanup_failed=1
@@ -877,6 +898,18 @@ PY
       inbound_protocol=vless
       inbound_settings="{\"clients\":[{\"id\":\"${uuid}\"}],\"decryption\":\"none\"}"
       client_uri="vless://${uuid}@${ENDPOINT_IP}:${port}?type=tcp&security=none&encryption=none#hosted-synthetic"
+      if [[ "${PODLAZ_E2E_PROFILE_TRANSITIONS}" == true ]]; then
+        # Distinct provider credentials make A and B independent profiles
+        # while sharing a deterministic isolated endpoint fixture.
+        local second_uuid invalid_uuid
+        second_uuid="$("${extract}/usr/lib/podlaz/xray" uuid | tr -d '[:space:]')"
+        invalid_uuid="$("${extract}/usr/lib/podlaz/xray" uuid | tr -d '[:space:]')"
+        [[ "${second_uuid}" != "${uuid}" && "${invalid_uuid}" != "${uuid}" && "${invalid_uuid}" != "${second_uuid}" ]] || return 1
+        inbound_settings="$(jq -cn --arg first "${uuid}" --arg second "${second_uuid}" '{clients:[{id:$first},{id:$second}],decryption:"none"}')"
+        printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic-b\n'           "${second_uuid}" "${ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/second-client-uri"
+        printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic-rejected\n'           "${invalid_uuid}" "${ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/rejected-client-uri"
+        chmod 0600 "${XRAY_ROOT}/second-client-uri" "${XRAY_ROOT}/rejected-client-uri"
+      fi
       ;;
     vmess)
       inbound_protocol=vmess
@@ -1218,6 +1251,151 @@ PY
 }
 
 
+# The installed-package transition suite runs only in the standard VLESS guest.
+# Each profile has a distinct UUID and durable profile ID; no real profile
+# credentials or private diagnostics leave the disposable guest.
+assert_transition_verified_active() {
+  local expected_profile="$1" expected_session="$2" expected_table="$3"
+  wait_guest_status verified-active 150 || return 1
+  [[ "$(guest_exec jq -er '.profile_id' "${GUEST_PRIVATE}/status.json")" == "${expected_profile}" ]] || return 1
+  [[ "$(guest_exec jq -er '.session_id' /run/podlaz/network-session-continuation.json)" == "${expected_session}" ]] || return 1
+  [[ "$(guest_exec jq -er '.protection.table' /run/podlaz/network-session-continuation.json)" == "${expected_table}" ]] || return 1
+  assert_verified_active_authority || return 1
+  run_guest_user /usr/bin/podlaz status >"${PRIVATE_ROOT}/transition-status.stdout" 2>"${PRIVATE_ROOT}/transition-status.stderr" || return 1
+  grep -Fx 'Status: Connected' "${PRIVATE_ROOT}/transition-status.stdout" >/dev/null || return 1
+  grep -Fx 'Protection: Active' "${PRIVATE_ROOT}/transition-status.stdout" >/dev/null || return 1
+  assert_foreign_sentinel
+}
+
+# A local Unix-socket relay proves that a full protected commit can finish
+# successfully even though the initiating CLI never receives its HTTP reply.
+# The relay runs as the same unprivileged user, so authorization is unchanged.
+qualify_lost_lifecycle_response() {
+  local first_selector="$1" second_selector="$2" second_id="$3" session_id="$4" table_id="$5"
+  local dir="${GUEST_PRIVATE}/lifecycle-response-drop"
+  local marker="${dir}/committed"
+  local active_tx failed_rc
+
+  guest_exec install -d -o e2e -g e2e -m 0700 "${dir}"
+  guest_exec rm -f "${dir}/podlazd.sock" "${marker}"
+  mark_failure product transition.lost_response_committed
+  guest_exec runuser -u e2e -- python3 /workspace/scripts/e2e/lib/lifecycle_response_drop.py \
+    "${dir}/podlazd.sock" @podlazd "${marker}" \
+    >"${PRIVATE_ROOT}/lost-response-proxy.stdout" 2>"${PRIVATE_ROOT}/lost-response-proxy.stderr" &
+  TRANSITION_PROXY_PID=$!
+  local attempt
+  for attempt in $(seq 1 300); do
+    if guest_exec test -S "${dir}/podlazd.sock" >/dev/null 2>&1; then break; fi
+    kill -0 "${TRANSITION_PROXY_PID}" >/dev/null 2>&1 || return 1
+    sleep 0.1
+  done
+  guest_exec test -S "${dir}/podlazd.sock" || return 1
+
+  set +e
+  run_guest_user env PODLAZ_RUNTIME_DIR="${dir}" /usr/bin/podlaz connect "${second_selector}" \
+    >"${PRIVATE_ROOT}/lost-response-connect.stdout" 2>"${PRIVATE_ROOT}/lost-response-connect.stderr"
+  failed_rc=$?
+  set -e
+  (( failed_rc != 0 )) || return 1
+  ! grep -Fx 'Connected' "${PRIVATE_ROOT}/lost-response-connect.stdout" >/dev/null || return 1
+  grep -F 'daemon lifecycle outcome unknown' "${PRIVATE_ROOT}/lost-response-connect.stderr" >/dev/null || return 1
+  wait "${TRANSITION_PROXY_PID}" || return 1
+  TRANSITION_PROXY_PID=""
+  guest_exec test -f "${marker}" || return 1
+  assert_transition_verified_active "${second_id}" "${session_id}" "${table_id}"
+  active_tx="$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")"
+  [[ -n "${active_tx}" ]] || return 1
+
+  # The next command observes the committed B generation, then replaces it
+  # with A. It must not replay the lost B mutation or publish a false A no-op.
+  run_guest_user /usr/bin/podlaz connect "${first_selector}" >"${PRIVATE_ROOT}/after-lost-response.stdout" \
+    2>"${PRIVATE_ROOT}/after-lost-response.stderr"
+  record_evidence transition.lost_response_committed pass
+}
+
+qualify_profile_transitions() {
+  [[ "${PODLAZ_E2E_PROFILE_TRANSITIONS}" == true ]] || return 0
+  [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vless && "${PODLAZ_E2E_GUEST_SUITE}" == noble ]] || return 1
+
+  local first_selector second_selector rejected_selector first_id second_id rejected_id
+  local session_id table_id tx_a tx_b tx_stable first_hash current_hash first_pid second_pid
+
+  first_selector="$(guest_exec cat "${GUEST_PRIVATE}/profile-selector")"
+  first_id="$(guest_exec jq -er '.profile_id' "${GUEST_PRIVATE}/status.json")"
+  tx_a="$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")"
+  session_id="$(guest_exec jq -er '.session_id' /run/podlaz/network-session-continuation.json)"
+  table_id="$(guest_exec jq -er '.protection.table' /run/podlaz/network-session-continuation.json)"
+  first_hash="$(guest_exec sha256sum /run/podlaz/network-session-continuation.json | awk '{print $1}')"
+
+  mark_failure product transition.import_profiles
+  guest_exec install -o e2e -g e2e -m 0600 /run/podlaz-synthetic-xray/second-client-uri "${GUEST_PRIVATE}/second-client-uri"
+  guest_exec install -o e2e -g e2e -m 0600 /run/podlaz-synthetic-xray/rejected-client-uri "${GUEST_PRIVATE}/rejected-client-uri"
+  run_guest_user /usr/bin/podlaz import "${GUEST_PRIVATE}/second-client-uri" >"${PRIVATE_ROOT}/second-import.stdout" 2>"${PRIVATE_ROOT}/second-import.stderr"
+  run_guest_user /usr/bin/podlaz import "${GUEST_PRIVATE}/rejected-client-uri" >"${PRIVATE_ROOT}/rejected-import.stdout" 2>"${PRIVATE_ROOT}/rejected-import.stderr"
+  second_selector="$(sed -n 's/^Profile: //p' "${PRIVATE_ROOT}/second-import.stdout" | head -n1)"
+  rejected_selector="$(sed -n 's/^Profile: //p' "${PRIVATE_ROOT}/rejected-import.stdout" | head -n1)"
+  [[ -n "${first_selector}" && -n "${second_selector}" && -n "${rejected_selector}" ]] || return 1
+  run_guest_user /usr/bin/podlaz profile list >"${PRIVATE_ROOT}/profile-list.stdout" 2>"${PRIVATE_ROOT}/profile-list.stderr"
+  record_evidence transition.second_profile pass
+
+  mark_failure product transition.repeated_connect
+  run_guest_user /usr/bin/podlaz connect "${first_selector}" >"${PRIVATE_ROOT}/repeated-connect.stdout" 2>"${PRIVATE_ROOT}/repeated-connect.stderr"
+  assert_transition_verified_active "${first_id}" "${session_id}" "${table_id}"
+  tx_stable="$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")"
+  current_hash="$(guest_exec sha256sum /run/podlaz/network-session-continuation.json | awk '{print $1}')"
+  [[ "${tx_stable}" == "${tx_a}" && "${current_hash}" == "${first_hash}" ]] || return 1
+  record_evidence transition.repeated_connect pass
+
+  mark_failure product transition.concurrent_connects
+  run_guest_user /usr/bin/podlaz connect "${first_selector}" >"${PRIVATE_ROOT}/parallel-1.stdout" 2>"${PRIVATE_ROOT}/parallel-1.stderr" &
+  first_pid=$!
+  run_guest_user /usr/bin/podlaz connect "${first_selector}" >"${PRIVATE_ROOT}/parallel-2.stdout" 2>"${PRIVATE_ROOT}/parallel-2.stderr" &
+  second_pid=$!
+  wait "${first_pid}"
+  wait "${second_pid}"
+  assert_transition_verified_active "${first_id}" "${session_id}" "${table_id}"
+  [[ "$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")" == "${tx_a}" ]] || return 1
+  record_evidence transition.concurrent_connects pass
+
+  mark_failure product transition.a_to_b
+  run_guest_user /usr/bin/podlaz connect "${second_selector}" >"${PRIVATE_ROOT}/a-to-b.stdout" 2>"${PRIVATE_ROOT}/a-to-b.stderr"
+  wait_guest_status verified-active 150
+  second_id="$(guest_exec jq -er '.profile_id' "${GUEST_PRIVATE}/status.json")"
+  tx_b="$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")"
+  [[ "${second_id}" != "${first_id}" && "${tx_b}" != "${tx_a}" ]] || return 1
+  assert_transition_verified_active "${second_id}" "${session_id}" "${table_id}"
+  guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
+  guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
+  record_evidence transition.a_to_b pass
+
+  mark_failure product transition.b_to_a
+  # Unqualified connect must still use the user's originally selected A.
+  run_guest_user /usr/bin/podlaz connect >"${PRIVATE_ROOT}/b-to-a.stdout" 2>"${PRIVATE_ROOT}/b-to-a.stderr"
+  assert_transition_verified_active "${first_id}" "${session_id}" "${table_id}"
+  [[ "$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")" != "${tx_b}" ]] || return 1
+  record_evidence transition.b_to_a pass
+  record_evidence transition.selection_preserved pass
+
+  mark_failure product transition.failed_switch_restored
+  # A distinct valid VLESS profile with an unrecognized identity must fail
+  # connectivity verification, then reconnect A behind the retained envelope.
+  set +e
+  run_guest_user /usr/bin/podlaz connect "${rejected_selector}" >"${PRIVATE_ROOT}/rejected-connect.stdout" 2>"${PRIVATE_ROOT}/rejected-connect.stderr"
+  local rejected_rc=$?
+  set -e
+  (( rejected_rc != 0 )) || return 1
+  assert_transition_verified_active "${first_id}" "${session_id}" "${table_id}"
+  record_evidence transition.failed_switch_restored pass
+
+  qualify_lost_lifecycle_response "${first_selector}" "${second_selector}" "${second_id}" "${session_id}" "${table_id}"
+  assert_transition_verified_active "${first_id}" "${session_id}" "${table_id}"
+
+  mark_failure product transition.restart_restored
+  guest_exec systemctl restart podlazd.service
+  assert_transition_verified_active "${first_id}" "${session_id}" "${table_id}"
+  record_evidence transition.restart_restored pass
+}
+
 qualify_systemd259_active_resolved() {
   [[ "${PODLAZ_E2E_GUEST_SUITE}" == resolute ]] || return 0
 
@@ -1373,6 +1551,8 @@ run_scenario() {
     run_active_traffic_checks
     mark_failure diagnostic_unknown tun.doctor
     run_tun_doctor
+
+    qualify_profile_transitions
 
     mark_failure diagnostic_unknown tun.disconnect
     run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr"

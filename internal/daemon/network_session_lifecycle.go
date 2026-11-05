@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -15,6 +16,9 @@ type networkSessionLifecycle struct {
 	lifecycle       lifecycleService
 	continuation    networkSessionContinuationStore
 	terminalReasons *productTerminalReasonStore
+	// Excludes the request-local "connecting" overlay. Sampled only under
+	// the daemon's lifecycle operation lock.
+	verifiedStatus func(context.Context) api.StatusResponse
 
 	continuationMu    sync.Mutex
 	explicitStop      bool
@@ -44,6 +48,10 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 		l.continuationMu.Unlock()
 		return api.LifecycleResponse{}, fmt.Errorf("load existing network session continuation before connect: %w", err)
 	}
+	if response, verified := l.verifiedSameNetworkSession(ctx, request, previous, previousExists); verified {
+		l.continuationMu.Unlock()
+		return response, nil
+	}
 	if err := l.continuation.Save(request); err != nil {
 		l.continuationMu.Unlock()
 		return api.LifecycleResponse{}, err
@@ -69,18 +77,108 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 	if connectErr == nil {
 		return response, nil
 	}
+	if replacementAttempt {
+		// The full-TUN runner may finish transaction rollback while the
+		// protected barrier's separate exact reconciliation still fails.
+		// A completed transaction alone does not prove safe restoration of
+		// the previous generation or permit erasing replacement authority.
+		var incomplete protectedReplacementCleanupError
+		_, _, rollbackStatus := tunFailureLogFields(connectErr)
+		if errors.As(connectErr, &incomplete) || rollbackStatus == "failed" {
+			return response, protectedReplacementCleanupError{cause: connectErr}
+		}
+		state, exists, stateErr := l.continuation.stateStore().Load()
+		if stateErr != nil || !exists {
+			return response, protectedReplacementCleanupError{cause: errors.Join(connectErr, stateErr)}
+		}
+		// A "not-started" transaction result only proves that the new data
+		// plane did not start. Protected replacement preparation may already
+		// have widened the live/privacy composition before that phase. Never
+		// erase transitional exact ownership from metadata alone.
+		if state.Replacement != nil {
+			previousProtection := state.Replacement.PreviousProtection
+			if rollbackStatus != "not-started" || previousProtection == nil ||
+				state.Protection == nil || !reflect.DeepEqual(*previousProtection, *state.Protection) {
+				return response, protectedReplacementCleanupError{cause: connectErr}
+			}
+		} else if state.Protection != nil &&
+			!networkSessionRequestsEquivalentIgnoringHandoff(state.Request, previous) {
+			// A committed or otherwise changed protected generation is not
+			// evidence that the old request can be safely reactivated.
+			return response, protectedReplacementCleanupError{cause: connectErr}
+		}
+	}
 	if restoreErr := l.restorePreviousContinuation(previous, previousExists); restoreErr != nil {
 		return response, errors.Join(connectErr, restoreErr)
 	}
 	if replacementAttempt {
 		if restoreErr := l.restorePreviousDataPlane(ctx, previous); restoreErr != nil {
-			return response, errors.Join(connectErr, restoreErr)
+			return response, protectedPreviousGenerationRestoreError{cause: errors.Join(connectErr, restoreErr)}
 		}
 	}
 	if reasonErr := l.publishTerminalConnectReason(ctx, request, connectErr, previousExists); reasonErr != nil {
 		return response, errors.Join(connectErr, reasonErr)
 	}
 	return response, connectErr
+}
+
+// verifiedSameNetworkSession is the only idempotent connect shortcut. Exact
+// durable intent and current verified live status are both necessary; a
+// matching profile ID from an earlier CLI status is insufficient.
+func (l *networkSessionLifecycle) verifiedSameNetworkSession(
+	ctx context.Context, request, previous api.ConnectRequest, previousExists bool,
+) (api.LifecycleResponse, bool) {
+	if !previousExists || l.verifiedStatus == nil ||
+		request.Mode != planner.ModeTun ||
+		!networkSessionRequestsEquivalentIgnoringHandoff(previous, request) {
+		return api.LifecycleResponse{}, false
+	}
+
+	store := l.continuation.stateStore()
+	before, exists, err := store.Load()
+	if err != nil || !exists || before.Intent != networkSessionIntentResume ||
+		before.Replacement != nil || before.Protection == nil ||
+		before.Protection.State != networkSessionProtectionArmed ||
+		!networkSessionRequestsEquivalentIgnoringHandoff(before.Request, request) {
+		return api.LifecycleResponse{}, false
+	}
+
+	status := l.verifiedStatus(ctx)
+	if ctx.Err() != nil || status.Connection != "active" ||
+		status.Mode != planner.ModeTun || status.ProfileID != request.Profile.ID ||
+		status.ProfileName != request.Profile.Name ||
+		status.ActiveTransactionID == "" ||
+		status.TunHealth == nil || status.TunHealth.State != api.TunHealthVerified ||
+		status.LifecyclePhase != "" || len(status.InspectionWarnings) != 0 {
+		return api.LifecycleResponse{}, false
+	}
+	if status.StartupScan != nil &&
+		(status.StartupScan.Status != api.StartupScanStatusClean ||
+			len(status.StartupScan.Candidates) != 0 || len(status.StartupScan.Warnings) != 0) {
+		return api.LifecycleResponse{}, false
+	}
+	for _, tx := range status.Transactions {
+		if tx.RequiresCleanup {
+			return api.LifecycleResponse{}, false
+		}
+	}
+	after, exists, err := store.Load()
+	if err != nil || !exists || !reflect.DeepEqual(before, after) {
+		return api.LifecycleResponse{}, false
+	}
+	return api.LifecycleResponse{
+		Connection:        status.Connection,
+		Mode:              status.Mode,
+		ProfileID:         status.ProfileID,
+		ProfileName:       status.ProfileName,
+		Proxy:             status.Proxy,
+		TUN:               status.TUN,
+		Routes:            status.Routes,
+		DNS:               status.DNS,
+		Firewall:          status.Firewall,
+		RuntimeConfigPath: status.RuntimeConfigPath,
+		Warnings:          append([]string(nil), status.Warnings...),
+	}, true
 }
 
 // ReconcileProtectedTun is the unwrapped automatic-repair entry point used only

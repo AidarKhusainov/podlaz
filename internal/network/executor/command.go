@@ -60,10 +60,16 @@ func runCommand(ctx context.Context, runner CommandRunner, name string, args ...
 }
 
 func observeCommand(ctx context.Context, runner CommandRunner, name string, args ...string) (CommandResult, error) {
+	return observeCommandWithTimeout(ctx, defaultCommandTimeout, runner, name, args...)
+}
+
+// Only explicitly bounded functional probes may override the short generic
+// observation deadline. The caller's tighter deadline still wins.
+func observeCommandWithTimeout(ctx context.Context, timeout time.Duration, runner CommandRunner, name string, args ...string) (CommandResult, error) {
 	if runner == nil {
 		runner = OSRunner{}
 	}
-	cmdCtx, cancel := context.WithTimeout(ctx, defaultCommandTimeout)
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	result, err := runner.Run(cmdCtx, name, args...)
 	if err == nil && result.ExitCode == 0 {

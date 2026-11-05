@@ -68,6 +68,14 @@ func daemonAPIInternal(err error) error {
 }
 
 func daemonAPIHTTPStatusCode(err error) int {
+	// Exact protected cleanup failure dominates any original preflight
+	// conflict. Reporting 409 could incorrectly suggest a safe retry while
+	// rollback authority remains unresolved.
+	var cleanup protectedReplacementCleanupError
+	var restore protectedPreviousGenerationRestoreError
+	if errors.As(err, &cleanup) || errors.As(err, &restore) {
+		return http.StatusServiceUnavailable
+	}
 	var ownership *netexecutor.DefaultDNSOwnershipError
 	if errors.As(err, &ownership) {
 		if ownership.Unknown {
@@ -78,10 +86,15 @@ func daemonAPIHTTPStatusCode(err error) int {
 	if profile.IsValidationError(err) {
 		return http.StatusBadRequest
 	}
-	if errors.Is(err, errConnectionAlreadyActive) || errors.Is(err, errFullTunnelConnectionBecameActive) || isTunHandoffBlocker(err) || isTunStalePodlazStateBlocker(err) {
+	if errors.Is(err, errConnectionAlreadyActive) || errors.Is(err, errFullTunnelConnectionBecameActive) ||
+		errors.Is(err, errProtectedNetworkSessionChangeWithoutHandoff) ||
+		errors.Is(err, errNetworkSessionTransitionInProgress) ||
+		isTunHandoffBlocker(err) || isTunStalePodlazStateBlocker(err) {
 		return http.StatusConflict
 	}
-	if isRuntimeUnavailableError(err) || isRuntimeResolutionError(err) || isTunVerificationError(err) {
+	if errors.Is(err, errNetworkSessionStartupRecoveryPending) ||
+		errors.Is(err, errLifecycleShuttingDown) || isRuntimeUnavailableError(err) ||
+		isRuntimeResolutionError(err) || isTunVerificationError(err) {
 		return http.StatusServiceUnavailable
 	}
 	var apiErr *daemonAPIError

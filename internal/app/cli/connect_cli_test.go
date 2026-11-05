@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -168,7 +169,7 @@ func TestRunCLIConnectExplicitProfileDoesNotChangeSelection(t *testing.T) {
 	}
 }
 
-func TestRunCLIConnectSameHealthyIntentIsNoOp(t *testing.T) {
+func TestRunCLIConnectSameHealthyIntentDelegatesNoOpToDaemon(t *testing.T) {
 	storePath := t.TempDir() + "/profiles.json"
 	p := testConnectProfile()
 	store, _ := profile.NewStore(storePath)
@@ -189,19 +190,61 @@ func TestRunCLIConnectSameHealthyIntentIsNoOp(t *testing.T) {
 				TUN:         "enabled",
 			}, nil
 		},
-		connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
 			calls++
-			return api.LifecycleResponse{}, nil
+			if req.Handoff != api.HandoffReplacePodlaz {
+				t.Fatalf("healthy handoff hint=%q", req.Handoff)
+			}
+			return api.LifecycleResponse{
+				Connection: "active", Mode: planner.ModeTun,
+				ProfileID: p.ID, ProfileName: p.Name,
+				Proxy: "active", TUN: "active",
+			}, nil
 		},
 	})
 	if err != nil {
 		t.Fatalf("idempotent connect failed: %v", err)
 	}
-	if calls != 0 {
-		t.Fatalf("healthy same intent rebuilt session %d time(s)", calls)
+	if calls != 1 {
+		t.Fatalf("healthy intent was not verified by the serialized daemon: calls=%d", calls)
 	}
 	if !strings.Contains(out.String(), "Protection: Active") {
 		t.Fatalf("unexpected no-op output: %q", out.String())
+	}
+}
+
+func TestRunCLIConnectStaleStatusCannotProduceFalseConnected(t *testing.T) {
+	storePath := t.TempDir() + "/profiles.json"
+	p := testConnectProfile()
+	store, err := profile.NewStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	cause := errors.New("current active generation was superseded")
+	calls := 0
+	err = runWithOptions(context.Background(), []string{"connect", p.ID}, &out, options{
+		profileStorePath: storePath,
+		daemonStatus: func(context.Context) (status.Report, error) {
+			return status.Report{
+				Connection: "active", Mode: planner.ModeTun,
+				ProfileID: p.ID, ProfileName: p.Name, TUN: "enabled",
+			}, nil
+		},
+		connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+			calls++
+			return api.LifecycleResponse{}, cause
+		},
+	})
+	if !errors.Is(err, cause) || calls != 1 {
+		t.Fatalf("CLI bypassed daemon admission: err=%v calls=%d", err, calls)
+	}
+	if strings.Contains(out.String(), "Connected") {
+		t.Fatalf("stale CLI status produced false Connected: %q", out.String())
 	}
 }
 

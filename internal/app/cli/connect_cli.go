@@ -41,11 +41,8 @@ func runConnectCommand(ctx context.Context, args []string, stdout io.Writer, opt
 	}
 
 	report, _ := runProductStatus(ctx, opts)
-	if canonicalIntentSatisfied(report, p) {
-		renderConnectResponse(stdout, p, api.LifecycleResponse{Connection: "active", Mode: planner.ModeTun})
-		return nil
-	}
-
+	// Status only suggests an admissible handoff. A concurrent request may
+	// supersede it; the daemon must verify the no-op after serialization.
 	response, err := runConnectWithHandoff(ctx, p, planner.ModeTun, canonicalConnectHandoff(report), opts)
 	if err != nil {
 		return lifecycleCommandError(err)
@@ -133,10 +130,6 @@ func validateCanonicalVPNProfile(p profile.Profile) error {
 		return err
 	}
 	return nil
-}
-
-func canonicalIntentSatisfied(report status.Report, p profile.Profile) bool {
-	return canonicalHealthyTunSession(report) && report.ProfileID == p.ID
 }
 
 func canonicalConnectHandoff(report status.Report) string {

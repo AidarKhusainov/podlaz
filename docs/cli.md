@@ -158,6 +158,22 @@ Behavior:
 - canonical connect never silently falls back to Proxy-only;
 - a profile that is renderable only as Proxy-only fails before privileged mutation and points to the explicit `podlaz debug proxy <profile>` action.
 
+A repeated connect is confirmed by the daemon after serializing lifecycle
+mutations, using the current verified generation and exact persisted profile
+material. A CLI status obtained before that operation is not a success
+acknowledgment. Requests for a different profile use protected replacement only
+when the current authority is verified.
+
+A lost response, cancellation, or client deadline after the daemon socket
+connects has an **unknown outcome**: the operation may already have committed.
+The normal client lifecycle budget is four minutes to accommodate bounded
+verification, rollback, and previous-generation restoration. An unknown result
+is not a confirmed disconnect or failed connect; inspect `podlaz status` and,
+if cleanup/recovery is incomplete, run `podlaz debug recover` before retrying.
+HTTP 409 denotes an authoritative conflict, while HTTP 503 denotes unavailable
+verification/recovery or unfinished protected cleanup. Neither permits a
+Proxy-only fallback or removal of foreign resources.
+
 The old public `--mode` and `--handoff` policy matrices do not exist.
 
 Successful default output is product-oriented:

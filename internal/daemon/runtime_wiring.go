@@ -59,14 +59,16 @@ func (s Server) prepareRuntime(ctx context.Context) (*daemonRuntime, error) {
 	}
 	productPhase := &productLifecyclePhaseTracker{}
 	productTerminalReasons := newProductTerminalReasonStore(runtimeDir, nil)
-	currentStatus := func(statusCtx context.Context) api.StatusResponse {
+	verifiedStatus := func(statusCtx context.Context) api.StatusResponse {
 		statusFn := lifecycle.Status
 		if s.Status != nil {
 			statusFn = s.Status
 		}
 		status := lifecycle.statusForPublicationFrom(statusCtx, statusFn)
-		status = decorateTunHealth(status, healthRuntime)
-		return productPhase.decorate(status)
+		return decorateTunHealth(status, healthRuntime)
+	}
+	currentStatus := func(statusCtx context.Context) api.StatusResponse {
+		return productPhase.decorate(verifiedStatus(statusCtx))
 	}
 
 	lockPath := api.LockPath(runtimeDir)
@@ -137,7 +139,8 @@ func (s Server) prepareRuntime(ctx context.Context) (*daemonRuntime, error) {
 	}
 	continuation := newNetworkSessionContinuationStore(runtimeDir, s.bootID)
 	sessionLifecycle := newNetworkSessionLifecycle(healthLifecycle, continuation)
-	lockedLifecycle := operationLock.wrap(sessionLifecycle)
+	sessionLifecycle.verifiedStatus = verifiedStatus
+	lockedLifecycle := operationLock.wrapWithProductPhase(sessionLifecycle, productPhase)
 	startupMutationGate := newNetworkSessionStartupMutationGate(lockedLifecycle)
 	automaticExecutor = tunAutomaticDispositionExecutor{
 		reconcile: sessionLifecycle.ReconcileProtectedTun,

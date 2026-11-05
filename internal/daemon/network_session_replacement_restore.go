@@ -4,9 +4,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
+
+// A failed exact rollback must not be mistaken for a restored session.
+type protectedReplacementCleanupError struct{ cause error }
+
+func (e protectedReplacementCleanupError) Error() string {
+	return "Unable to switch VPN profiles: exact cleanup did not complete. Protection may remain armed; do not assume either profile is connected. Run podlaz status, podlaz debug doctor --tun and podlaz debug recover."
+}
+
+func (e protectedReplacementCleanupError) Unwrap() error { return e.cause }
+
+// A transaction rollback can converge while the previous generation fails
+// to reconnect or reverify. Never present that as successful restoration.
+type protectedPreviousGenerationRestoreError struct{ cause error }
+
+func (e protectedPreviousGenerationRestoreError) Error() string {
+	return "Unable to finish VPN profile switching: the previous session's data plane could not be verified after rollback. Protection may remain armed; the connection is recovery-required. Run podlaz status, podlaz debug doctor --tun and podlaz debug recover."
+}
+
+func (e protectedPreviousGenerationRestoreError) Unwrap() error { return e.cause }
+
+// Restoring a previous generation executes full-TUN connectivity verification,
+// potentially twice. It needs a separate bounded budget from rollback.
+const protectedPreviousGenerationRestoreTimeout = 2 * time.Minute
 
 // restorePreviousDataPlane gives a failed protected replacement one bounded,
 // daemon-owned opportunity to restore the previous generation. It deliberately
@@ -25,7 +49,7 @@ func (l *networkSessionLifecycle) restorePreviousDataPlane(ctx context.Context, 
 		ctx = context.Background()
 	}
 
-	restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
+	restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), protectedPreviousGenerationRestoreTimeout)
 	l.continuationMu.Lock()
 	if l.explicitStop {
 		l.continuationMu.Unlock()
@@ -38,6 +62,16 @@ func (l *networkSessionLifecycle) restorePreviousDataPlane(ctx context.Context, 
 	l.continuationMu.Unlock()
 
 	_, restoreErr := l.lifecycle.Connect(restoreCtx, previous)
+	if errors.Is(restoreErr, errConnectionAlreadyActive) {
+		// An existing Xray child is not evidence that it is the previous
+		// protected profile. Resolve the conflict from durable exact session
+		// and verified current-generation evidence before accepting restore.
+		if _, verified := l.verifiedSameNetworkSession(restoreCtx, previous, previous, true); verified {
+			restoreErr = nil
+		} else {
+			restoreErr = fmt.Errorf("previous protected generation could not be verified after an active-core conflict: %w", restoreErr)
+		}
+	}
 	cancel()
 
 	l.continuationMu.Lock()
@@ -47,7 +81,7 @@ func (l *networkSessionLifecycle) restorePreviousDataPlane(ctx context.Context, 
 	}
 	l.continuationMu.Unlock()
 
-	if restoreErr == nil || errors.Is(restoreErr, errConnectionAlreadyActive) {
+	if restoreErr == nil {
 		return nil
 	}
 	if stopped && errors.Is(restoreErr, context.Canceled) {
