@@ -75,7 +75,7 @@ type networkSessionStateStore struct {
 }
 
 var (
-	errProtectedNetworkSessionChangeWithoutHandoff = errors.New("protected Network Session change requires replace-podlaz handoff; inspect podlaz status before retrying")
+	errProtectedNetworkSessionChangeWithoutHandoff = errors.New("Unable to switch VPN profiles: the existing protected Podlaz session cannot be safely replaced. No new Podlaz network changes were applied. Run podlaz status and podlaz debug doctor --tun.")
 	errNetworkSessionTransitionInProgress          = errors.New("network session transition is still converging; inspect podlaz status and run podlaz debug recover before retrying")
 	networkSessionIDPattern                        = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	privacyEnvelopeTablePattern                    = regexp.MustCompile(`^podlaz_pe_[0-9a-f]{12}(?:_[1-9][0-9]{0,2})?$`)
