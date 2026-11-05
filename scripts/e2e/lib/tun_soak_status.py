@@ -50,19 +50,24 @@ def classify_status(raw_output: str, *, exit_code: int) -> str:
         return INVALID_STATUS
 
     lines = [line.strip() for line in raw_output.splitlines() if line.strip()]
+    status_fields = [line for line in lines if line.startswith("Status:")]
+    protection_fields = [line for line in lines if line.startswith("Protection:")]
+    if len(status_fields) != 1 or any(line.startswith("Mode:") for line in lines):
+        return INVALID_STATUS
+
     state = _single_prefixed_value(lines, "Status: ")
-    mode = _single_prefixed_value(lines, "Mode: ")
-    if state is None:
+    protection = _single_prefixed_value(lines, "Protection: ")
+    if state == "Disconnected":
+        return TERMINAL_INACTIVE if exit_code == 0 and not protection_fields else INVALID_STATUS
+    if len(protection_fields) != 1 or protection != "Active":
         return INVALID_STATUS
 
     if state == "Connected":
-        return VERIFIED if exit_code == 0 and mode == "tun" else INVALID_STATUS
+        return VERIFIED if exit_code == 0 else INVALID_STATUS
     if state == "Connecting":
-        return RETRY_INITIALIZING if mode == "tun" else INVALID_STATUS
+        return RETRY_INITIALIZING
     if state == "Reconnecting":
-        return RETRY_REVALIDATING if mode == "tun" else INVALID_STATUS
-    if state == "Disconnected":
-        return TERMINAL_INACTIVE if exit_code == 0 else INVALID_STATUS
+        return RETRY_REVALIDATING
     return INVALID_STATUS
 
 
