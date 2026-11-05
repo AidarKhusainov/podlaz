@@ -8,11 +8,20 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
-const maxResolvedScopedQueryOutput = 64 * 1024
+const (
+	maxResolvedScopedQueryOutput = 64 * 1024
+	// The full-TUN functional DNS probe is bounded to 15 seconds. A nested
+	// generic 5-second command observation prematurely cuts off this strict,
+	// uncached scoped query during slower daemon-restart replay (QEMU/TCG).
+	// This is a command budget, not permission to retry, accept cached DNS,
+	// or weaken exact link-identity verification.
+	resolvedScopedQueryCommandTimeout = 15 * time.Second
+)
 
 var (
 	ErrResolvedLinkNotReady     = errors.New("systemd-resolved link is not ready")
@@ -110,7 +119,7 @@ func (e ResolvedScopedQueryVerifier) Query(ctx context.Context, link string, lin
 		return nil, resolvedScopedQueryFailure(ResolvedScopedCauseInvalidInput, fmt.Errorf("%w: missing query name", ErrResolvedLinkQueryFailure))
 	}
 
-	result, err := observeCommand(ctx, e.Runner, "resolvectl", "--cache=no", "--interface="+strconv.Itoa(linkIndex), "-4", "query", name)
+	result, err := observeCommandWithTimeout(ctx, resolvedScopedQueryCommandTimeout, e.Runner, "resolvectl", "--cache=no", "--interface="+strconv.Itoa(linkIndex), "-4", "query", name)
 	if err != nil {
 		cause := ResolvedScopedCauseCommandFailure
 		var unavailable *exec.Error
