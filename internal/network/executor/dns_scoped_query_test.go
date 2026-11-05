@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
@@ -178,4 +179,52 @@ type scopedCommandFailureRunner struct{ err error }
 
 func (r scopedCommandFailureRunner) Run(context.Context, string, ...string) (CommandResult, error) {
 	return CommandResult{ExitCode: -1}, r.err
+}
+
+type scopedDeadlineRecordingRunner struct {
+	remaining time.Duration
+	hasLimit  bool
+}
+
+func (r *scopedDeadlineRecordingRunner) Run(ctx context.Context, _ string, _ ...string) (CommandResult, error) {
+	deadline, ok := ctx.Deadline()
+	r.hasLimit = ok
+	if ok {
+		r.remaining = time.Until(deadline)
+	}
+	return CommandResult{Stdout: "example.com: 93.184.216.34 -- link: podlaz0\n"}, nil
+}
+
+func TestScopedDNSCommandCanUseFunctionalProbeBudgetBeyondGenericCommandBound(t *testing.T) {
+	runner := &scopedDeadlineRecordingRunner{}
+	got, err := (ResolvedScopedQueryVerifier{Runner: runner}).Query(
+		context.Background(), "podlaz0", 7, "example.com",
+	)
+	if err != nil || !reflect.DeepEqual(got, []string{"93.184.216.34"}) {
+		t.Fatalf("scoped query with positive exact-link evidence: ips=%#v err=%v", got, err)
+	}
+	// The functional scoped DNS probe has an explicit 15s budget. Its
+	// subprocess must not be stopped at the unrelated 5s observation budget,
+	// particularly during daemon startup replay on QEMU/TCG.
+	if !runner.hasLimit || runner.remaining < 10*time.Second ||
+		runner.remaining > 15*time.Second {
+		t.Fatalf("scoped query lost its independent bounded probe budget: deadline=%t remaining=%s",
+			runner.hasLimit, runner.remaining)
+	}
+
+	// A shorter caller deadline still takes precedence: an explicit client or
+	// shutdown interruption must not be extended by this DNS-specific budget.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	callerRunner := &scopedDeadlineRecordingRunner{}
+	if _, err := (ResolvedScopedQueryVerifier{Runner: callerRunner}).Query(
+		ctx, "podlaz0", 7, "example.com",
+	); err != nil {
+		t.Fatalf("scoped query with shorter caller deadline: %v", err)
+	}
+	if !callerRunner.hasLimit || callerRunner.remaining <= 0 ||
+		callerRunner.remaining > 200*time.Millisecond {
+		t.Fatalf("scoped query overrode caller cancellation bound: deadline=%t remaining=%s",
+			callerRunner.hasLimit, callerRunner.remaining)
+	}
 }
