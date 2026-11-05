@@ -191,8 +191,16 @@ func TestProtectedMismatchIsTypedConflictWithoutTouchingAuthority(t *testing.T) 
 	if !errors.Is(err, errProtectedNetworkSessionChangeWithoutHandoff) {
 		t.Fatalf("protected mismatch error=%v", err)
 	}
-	if got := daemonAPIHTTPStatusCode(err); got != 409 {
+	// Continuation.Save wraps this sentinel before the HTTP handler sees it.
+	// The public conflict must remain typed and actionable without surfacing
+	// the internal one-shot handoff policy.
+	wrapped := errors.Join(errors.New("persist network session continuation"), err)
+	if got := daemonAPIHTTPStatusCode(wrapped); got != 409 {
 		t.Fatalf("blocked switch HTTP status=%d, want 409", got)
+	}
+	if !strings.Contains(wrapped.Error(), "podlaz debug doctor --tun") ||
+		strings.Contains(wrapped.Error(), "replace-podlaz") {
+		t.Fatalf("protected conflict exposed internal handoff policy or lacks safe guidance: %v", wrapped)
 	}
 	after, _, err := continuation.stateStore().Load()
 	if err != nil || !reflect.DeepEqual(before, after) {
