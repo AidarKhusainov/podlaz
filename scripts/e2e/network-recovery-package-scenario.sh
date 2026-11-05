@@ -344,8 +344,16 @@ import json
 import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     record = json.load(handle)
-keys = ("schema_version", "owner", "boot_id", "resume_stage", "last_resume_outcome", "tun_failure_phase", "rollback_status", "transaction_present", "legacy_migration")
-print(json.dumps({key: record.get(key) for key in keys}, indent=2, sort_keys=True))
+keys = ("schema_version", "owner", "boot_id", "resume_stage", "last_resume_outcome", "tun_failure_phase", "rollback_status", "transaction_present", "legacy_migration", "replay_disposition", "network_apply_subphase")
+safe = {key: record.get(key) for key in keys}
+# Keep only typed replay fields. Session/transaction IDs, raw commands and
+# runtime data are never copied into the diagnostic projection.
+attempt_keys = ("resume_stage", "replay_disposition", "tun_failure_phase", "network_apply_subphase", "network_apply_failure_cause", "dns_failure_cause", "rollback_status", "candidate_mutation")
+for name in ("originating", "current"):
+    attempt = record.get(name)
+    if isinstance(attempt, dict):
+        safe[name] = {key: attempt.get(key) for key in attempt_keys}
+print(json.dumps(safe, indent=2, sort_keys=True))
 PY_SAFE_DIAGNOSTIC
   fi
   sudo -n python3 - "${TRANSACTION_DIR}" >"${dir}/transactions.json" <<'PY_SAFE_TRANSACTIONS' || true
