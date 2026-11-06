@@ -375,3 +375,24 @@ func TestConnectObservationRetainsScopedProbeAndCommandBudgets(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectObservationRecordsAuthoritativeDaemonProcessIdentity(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PODLAZ_CONNECT_OBSERVATION_UNTIL", strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10))
+	l := newNetworkSessionLifecycle(observationTestLifecycle{connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+		return api.LifecycleResponse{}, nil
+	}}, newNetworkSessionContinuationStore(dir, fixedBootID("boot-a")))
+	if _, err := l.Connect(context.Background(), testContinuationRequest()); err != nil {
+		t.Fatal(err)
+	}
+	tick, err := rollbackChildProcessStartTime(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := fmt.Sprintf("%d-%s", os.Getpid(), tick)
+	for _, event := range readObservation(t, dir) {
+		if event["source"] != expected {
+			t.Fatalf("missing exact source process: %#v", event["source"])
+		}
+	}
+}

@@ -13,7 +13,7 @@ spec.loader.exec_module(verdict)
 def restored_trace():
     rows = []
     def event(role, generation, name, outcome='succeeded', **extra):
-        rows.append(dict(schema=1, operation=1, sequence=len(rows)+1, elapsed_us=len(rows)*100,
+        rows.append(dict(source="4242-42", schema=1, operation=1, sequence=len(rows)+1, elapsed_us=len(rows)*100,
                          role=role, generation=generation, event=name, outcome=outcome,
                          phase='unknown', classification='none', dns_cause='unknown',
                          rollback='unknown', lost_before=0, **extra))
@@ -42,7 +42,7 @@ class VerdictTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'events.jsonl'
             path.write_text(''.join(json.dumps(r)+'\n' for r in rows))
-            return verdict.validate(path, 'b-first')
+            return verdict.validate(path, 'b-first', '4242-42')
 
     def test_reconnecting_after_verified_restore_is_accepted(self):
         self.assertEqual('pass', self.validate(restored_trace())['verdict'])
@@ -72,3 +72,21 @@ class VerdictTest(unittest.TestCase):
                 rows[-2]['generation'] = '1'
             with self.subTest(kind=kind), self.assertRaises(AssertionError):
                 self.validate(rows)
+
+class FreshnessTest(unittest.TestCase):
+    def test_record_without_current_daemon_identity_is_not_admissible(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'events.jsonl'
+            path.write_text(''.join(json.dumps(r)+'\n' for r in restored_trace()))
+            # An immutable record from an earlier process must not qualify a
+            # new operation merely because its local operation ordinal matches.
+            with self.assertRaises(AssertionError):
+                verdict.validate(path, 'b-first')
+
+    def test_stale_daemon_same_ordinal_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'events.jsonl'
+            path.write_text(''.join(json.dumps(r)+'\n' for r in restored_trace()))
+            for identity in ('4243-42','4242-43'):
+                with self.subTest(identity=identity), self.assertRaises(AssertionError):
+                    verdict.validate(path, 'b-first', identity)

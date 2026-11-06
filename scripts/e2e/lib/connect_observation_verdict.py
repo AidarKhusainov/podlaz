@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
 """Strict synthetic guest evidence projection. Never print arbitrary input."""
 import json
+import re
 from pathlib import Path
 import sys
 
 
-def validate(path, mode):
+def validate(path, mode, expected_source=None):
+    assert expected_source and re.fullmatch(r"[0-9]+-[0-9]+",expected_source), "missing current daemon identity"
     data = Path(path).read_bytes()
     assert len(data) <= 512 * 1024, 'unbounded stream'
     assert data.endswith(b'\n'), 'partial record'
     events = [json.loads(line) for line in data.splitlines()]
     assert events, 'empty stream'
     by_operation = {}
-    allowed = {'schema', 'operation', 'sequence', 'elapsed_us', 'role', 'generation', 'pass', 'event', 'outcome', 'phase', 'classification', 'dns_cause', 'rollback', 'lost_before', 'session', 'protection_authority', 'live_protection', 'lifecycle', 'product_state', 'health_generation', 'active_generation'}
+    allowed = {'source', 'schema', 'operation', 'sequence', 'elapsed_us', 'role', 'generation', 'pass', 'event', 'outcome', 'phase', 'classification', 'dns_cause', 'rollback', 'lost_before', 'session', 'protection_authority', 'live_protection', 'lifecycle', 'product_state', 'health_generation', 'active_generation'}
     for e in events:
         assert not (e.keys() - allowed), 'unexpected field'
         assert e['schema'] == 1 and e['lost_before'] == 0, 'lost evidence'
+        assert e['source'] == expected_source, 'stale or mixed daemon identity'
         assert e['role'] in ('A', 'B'), 'unknown role'
         group = by_operation.setdefault(e['operation'], [])
         assert e['sequence'] == len(group) + 1, 'sequence gap'
@@ -97,7 +100,7 @@ def validate(path, mode):
 
 if __name__ == '__main__':
     try:
-        result = validate(sys.argv[1], sys.argv[2])
+        result = validate(sys.argv[1], sys.argv[2], sys.argv[3])
     except (AssertionError, ValueError, KeyError, IndexError):
         raise SystemExit('connect observation qualification incomplete') from None
     print(json.dumps(result, sort_keys=True))

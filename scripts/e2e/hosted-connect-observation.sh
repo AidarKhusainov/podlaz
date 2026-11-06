@@ -107,10 +107,29 @@ observation_arm() {
   guest_exec /bin/bash -c 'printf "{\"mode\":\"%s\"}\n" "$1" >"$2/fault.json"; rm -f "$2/queries"' _ "${mode}" "${OBS_ROOT}"
 }
 
+observation_source_identity() {
+  # Exact current service process, sampled on both sides of file collection.
+  guest_exec /bin/bash -s <<'IDENTITY'
+pid="$(systemctl show -p MainPID --value podlazd.service)"
+python3 - "$pid" <<'PYID'
+from pathlib import Path
+import sys
+pid=int(sys.argv[1]); assert pid>0
+stat=Path(f"/proc/{pid}/stat").read_text()
+tick=stat[stat.rindex(') ')+2:].split()[19]
+assert tick.isdigit() and int(tick)>0
+print(f"{pid}-{tick}")
+PYID
+IDENTITY
+}
+
 observation_save() {
-  local mode="$1" path="${PRIVATE_ROOT}/observation-${1}.jsonl"
+  local mode="$1" path="${PRIVATE_ROOT}/observation-${1}.jsonl" source_before source_after
+  source_before="$(observation_source_identity)"
   guest_exec cat "${OBS_FILE}" >"${path}"
-  python3 "${SCRIPT_DIR}/lib/connect_observation_verdict.py" "${path}" "${mode}" >>"${OBS_RESULTS}"
+  source_after="$(observation_source_identity)"
+  [[ "$source_before" == "$source_after" ]]
+  python3 "${SCRIPT_DIR}/lib/connect_observation_verdict.py" "${path}" "${mode}" "$source_before" >>"${OBS_RESULTS}"
   install -m 0600 "${path}" "${E2E_ARTIFACT_DIR}/connect-observation-${mode}.jsonl"
 }
 

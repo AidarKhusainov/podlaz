@@ -1,7 +1,6 @@
 name: Experimental connect observation
 on:
-  push:
-    branches: [experiment/protected-connect-diagnostics]
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:

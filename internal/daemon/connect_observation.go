@@ -22,6 +22,7 @@ const connectObservationWindow = 15 * time.Minute
 const connectObservationLimit = 1024
 
 type connectObservationEvent struct {
+	Source           string `json:"source"`
 	Schema           int    `json:"schema"`
 	Operation        uint64 `json:"operation"`
 	Sequence         uint64 `json:"sequence"`
@@ -46,6 +47,7 @@ type connectObservationEvent struct {
 }
 
 type connectObservation struct {
+	source      string
 	until       time.Time
 	started     time.Time
 	operations  atomic.Uint64
@@ -60,7 +62,8 @@ type connectObservationOperation struct {
 	transactions map[string]string
 }
 type connectObservationScope struct {
-	operation  *connectObservationOperation
+	operation *connectObservationOperation
+	// B is the requested candidate; A is its built-in previous restoration.
 	role       string
 	generation string
 	pass       string
@@ -77,7 +80,13 @@ func newConnectObservation(runtimeDir string) *connectObservation {
 	if !until.After(now) || until.Sub(now) > connectObservationWindow {
 		return nil
 	}
-	o := &connectObservation{until: now.Add(until.Sub(now)), started: now, events: make(chan connectObservationEvent, 128)}
+	tick, err := rollbackChildProcessStartTime(os.Getpid())
+	if err != nil {
+		return nil
+	}
+	// Existing exact PID/start-time parsing; absence is never invented identity.
+	source := strconv.Itoa(os.Getpid()) + "-" + tick
+	o := &connectObservation{source: source, until: now.Add(until.Sub(now)), started: now, events: make(chan connectObservationEvent, 128)}
 	go o.write(runtimeDir)
 	return o
 }
@@ -142,6 +151,10 @@ func (s *connectObservationScope) emit(e connectObservationEvent) {
 		return
 	}
 	e.Schema = 1
+	e.Source = o.source
+	if e.Source == "" {
+		e.Source = "unknown"
+	}
 	e.Operation = s.operation.id
 	e.Sequence = seq
 	e.ElapsedUS = time.Since(o.started).Microseconds()
