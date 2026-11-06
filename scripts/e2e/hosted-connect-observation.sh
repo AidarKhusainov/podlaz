@@ -177,6 +177,16 @@ observation_relay_ready() { guest_exec test -S "${GUEST_PRIVATE}/observation-rel
 observation_query_ready() { guest_exec test -f "${OBS_ROOT}/failed-query" >/dev/null 2>&1; }
 observation_restore_ready() { guest_exec test -f "${OBS_ROOT}/restore-ready" >/dev/null 2>&1; }
 
+observation_wait_verified_active() {
+  mark_failure diagnostic_unknown observation.transition-verified-active
+  wait_guest_status verified-active 150
+}
+
+observation_assert_exact_active_authority() {
+  mark_failure diagnostic_unknown observation.transition-exact-authority
+  assert_transition_verified_active "$@"
+}
+
 qualify_profile_transitions() {
   local first second first_id second_id="" session table mode rc started elapsed previous_tx new_tx expected_id
   first="$(guest_exec cat "${GUEST_PRIVATE}/profile-selector")"
@@ -203,8 +213,7 @@ qualify_profile_transitions() {
     # A successful Connect can return while health initialization is pending.
     # The next canonical replacement requires the same verified-active gate as
     # the inherited transition suite; waiting does not retry a Connect.
-    mark_failure diagnostic_unknown observation.transition-verified-active
-    if ! wait_guest_status verified-active 150; then observation_failed_command; return 1; fi
+    if ! observation_wait_verified_active; then observation_failed_command; return 1; fi
     new_tx="$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")"
     [[ "${new_tx}" != "${previous_tx}" ]] || fail "profile switch reused previous transaction"
     expected_id="${first_id}"
@@ -215,8 +224,7 @@ qualify_profile_transitions() {
       fi
       expected_id="${second_id}"
     fi
-    mark_failure diagnostic_unknown observation.transition-exact-authority
-    assert_transition_verified_active "${expected_id}" "${session}" "${table}"
+    observation_assert_exact_active_authority "${expected_id}" "${session}" "${table}"
     [[ "$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")" == "${new_tx}" ]] || return 1
     if [[ "${OBS_ENABLED}" == true ]]; then observation_save none; fi
   done
