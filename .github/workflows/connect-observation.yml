@@ -39,7 +39,12 @@ jobs:
         run: bash scripts/e2e/tests/connect-observation-failure-steps.sh
       - name: Full source and concurrency qualification
         run: |
-          test -z "$(gofmt -l .)"
+          unformatted="$(gofmt -l .)"
+          if [[ -n "$unformatted" ]]; then
+            printf 'Unformatted Go files:\\n%s\\n' "$unformatted"
+            while IFS= read -r file; do gofmt -d "$file"; done <<<"$unformatted"
+            exit 1
+          fi
           go test ./...
           go vet ./...
           bash scripts/ci/repository-structure.sh --final
