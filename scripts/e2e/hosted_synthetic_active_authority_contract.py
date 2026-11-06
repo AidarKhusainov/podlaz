@@ -144,6 +144,51 @@ def main() -> int:
         write(root / "nft.json", exact_nft)
         verify(root)
 
+        # Exercise the complete verify() path, including the active
+        # transaction and session authority, not a copied nft parser.
+        foreign = copy.deepcopy(exact_nft)
+        foreign["nftables"].extend([
+            {"table": {"family": "inet", "name": "pzobs_watch"}},
+            {"chain": {"family": "inet", "table": "pzobs_watch", "name": "ordinary"}},
+            {"rule": {"family": "inet", "table": "pzobs_watch", "chain": "ordinary",
+                      "expr": [{"counter": {"packets": 1, "bytes": 10}}]}},
+            {"table": {"family": "inet", "name": "podlaz_pe_0123456789ab_lookalike"}},
+            {"chain": {"family": "inet", "table": "podlaz_pe_0123456789ab_lookalike",
+                       "name": "ordinary"}},
+            {"rule": {"family": "inet", "table": "podlaz_pe_0123456789ab_lookalike",
+                      "chain": "ordinary", "expr": [{"accept": None}]}},
+        ])
+        write(root / "nft.json", foreign)
+        verify(root)
+        write(root / "nft.json", exact_nft)
+
+        def reject_nft(mutator, message):
+            observed = copy.deepcopy(exact_nft)
+            mutator(observed["nftables"])
+            write(root / "nft.json", observed)
+            expect_mismatch(root, message)
+            write(root / "nft.json", exact_nft)
+
+        reject_nft(lambda entries: entries.__setitem__(slice(None),
+            [e for e in entries if e.get("table", {}).get("name") != "podlaz"]),
+            "missing own table accepted")
+        reject_nft(lambda entries: entries.append(copy.deepcopy(entries[1])),
+            "duplicate own table accepted")
+        reject_nft(lambda entries: entries[1]["table"].update(family="ip"),
+            "wrong own family accepted")
+        reject_nft(lambda entries: entries[1]["table"].pop("family"),
+            "ambiguous own table identity accepted")
+        reject_nft(lambda entries: entries.append({
+            "chain": {"family": "inet", "table": "podlaz", "name": "extra"}}),
+            "extra own chain without priority accepted")
+        reject_nft(lambda entries: entries.append({
+            "rule": {"family": "inet", "table": "podlaz", "chain": "output",
+                     "expr": [{"accept": None}]}}),
+            "extra own rule without comment accepted")
+        reject_nft(lambda entries: next(e["rule"] for e in entries
+            if e.get("rule", {}).get("table") == "podlaz").pop("comment"),
+            "missing own rule comment accepted")
+
         write(root / "boot-id", "boot-2\n")
         expect_mismatch(root, "previous-boot Network Session authority was accepted")
         write(root / "boot-id", "boot-1\n")
