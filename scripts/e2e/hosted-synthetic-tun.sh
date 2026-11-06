@@ -390,13 +390,13 @@ teardown_all() {
     record_if_missing outer.cleanup pass
   else
     record_if_missing outer.cleanup fail
-    mark_failure infrastructure outer.cleanup
+    if (( saved == 0 )); then mark_failure infrastructure outer.cleanup; fi
   fi
   if assert_public_artifact_privacy; then
     record_if_missing artifact.privacy pass
   else
     record_if_missing artifact.privacy fail
-    mark_failure fixture artifact.privacy
+    if (( saved == 0 )); then mark_failure fixture artifact.privacy; fi
   fi
   if (( saved != 0 )) && [[ "${FAILURE_CLASS}" == none ]]; then
     mark_failure infrastructure scenario

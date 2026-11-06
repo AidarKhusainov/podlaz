@@ -215,6 +215,7 @@ qualify_profile_transitions() {
       fi
       expected_id="${second_id}"
     fi
+    mark_failure diagnostic_unknown observation.transition-exact-authority
     assert_transition_verified_active "${expected_id}" "${session}" "${table}"
     [[ "$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")" == "${new_tx}" ]] || return 1
     if [[ "${OBS_ENABLED}" == true ]]; then observation_save none; fi

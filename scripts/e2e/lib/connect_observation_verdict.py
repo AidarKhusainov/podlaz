@@ -114,7 +114,7 @@ def capture_boundary(path, expected_source, window_until, *, now=None):
     assert type(window_until) is int and now < window_until <= now + 15 * 60, 'observer window inactive'
     raw = Path(path).read_bytes()
     assert len(raw) <= 512 * 1024, 'unbounded pre-request stream'
-    assert not raw or raw.endswith(b'\\n'), 'partial pre-request record'
+    assert not raw or raw.endswith(b'\n'), 'partial pre-request record'
     events = [json.loads(line) for line in raw.splitlines()]
     last_operation = 0
     last_elapsed = -1
