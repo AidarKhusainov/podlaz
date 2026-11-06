@@ -11,7 +11,6 @@ import (
 	"time"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
-	productstatus "github.com/AidarKhusainov/podlaz/internal/status"
 )
 
 // Experimental, observation only. No event or write result is lifecycle authority.
@@ -214,42 +213,12 @@ func (l *networkSessionLifecycle) finishConnectObservation(ctx context.Context, 
 	case protectedPreviousGenerationRestoreError:
 		e.Lifecycle = "restore-failed-recovery-required"
 	}
-	l.continuationMu.Lock()
-	state, exists, loadErr := l.continuation.stateStore().Load()
-	l.continuationMu.Unlock()
-	if loadErr == nil {
-		if !exists {
-			e.Session = "absent"
-			e.Protection = "absent"
-		} else {
-			switch state.Intent {
-			case networkSessionIntentResume, networkSessionIntentDisconnect, networkSessionIntentTerminal:
-				e.Session = string(state.Intent)
-			}
-			if state.Protection == nil {
-				e.Protection = "absent"
-			} else {
-				switch state.Protection.State {
-				case networkSessionProtectionUnarmed, networkSessionProtectionArming, networkSessionProtectionArmed, networkSessionProtectionRemoving:
-					e.Protection = string(state.Protection.State)
-				}
-			}
-		}
-	}
-	if l.verifiedStatus != nil {
-		status := l.verifiedStatus(context.WithoutCancel(ctx))
-		e.ProductState = string(productstatus.WithTunHealth(productstatus.FromDaemon(status), status.TunHealth).ProductView(nil).State)
-		e.ActiveGeneration = "unknown"
-		if alias, ok := s.operation.transactions[status.ActiveTransactionID]; ok {
-			e.ActiveGeneration = alias
-		}
-		if status.TunHealth != nil {
-			e.HealthGeneration = status.TunHealth.NetworkGeneration
-		}
-	} else {
-		e.ProductState = "Unknown"
-		e.ActiveGeneration = "unknown"
-	}
+	// Terminal observation is best-effort. Loading durable state or invoking
+	// verifiedStatus can block despite context cancellation and may hold a
+	// product lock. Those reads belong to independent post-operation acceptance.
+	// Unknown values are intentional: they are not inferred from a response.
+	e.ProductState = "Unknown"
+	e.ActiveGeneration = "unknown"
 	// Durable armed metadata is NOT proof of current live composition. The
 	// operation's envelope-verify and commit events are the independent evidence.
 	s.emit(e)

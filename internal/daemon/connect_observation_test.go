@@ -209,7 +209,7 @@ func TestRollbackCompletionReleaseSummaryLossRemainsSeparate(t *testing.T) {
 	}
 }
 
-func TestConnectObservationUsesExistingTerminalProjection(t *testing.T) {
+func TestConnectObservationTerminalDoesNotReadStatus(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PODLAZ_CONNECT_OBSERVATION_UNTIL", strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10))
 	l := newNetworkSessionLifecycle(observationTestLifecycle{connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
@@ -218,15 +218,15 @@ func TestConnectObservationUsesExistingTerminalProjection(t *testing.T) {
 	calls := 0
 	l.verifiedStatus = func(context.Context) api.StatusResponse {
 		calls++
-		return api.StatusResponse{Connection: "active", Mode: planner.ModeTun, TunHealth: &api.TunHealthStatus{State: api.TunHealthRevalidating, NetworkGeneration: 7}, ProfileID: "private-profile", ProfileName: "private.example.test"}
+		return api.StatusResponse{Connection: "active", Mode: planner.ModeTun, TunHealth: &api.TunHealthStatus{State: api.TunHealthRevalidating, NetworkGeneration: 7}}
 	}
 	if _, err := l.Connect(context.Background(), testContinuationRequest()); err != nil {
 		t.Fatal(err)
 	}
-	terminal := readObservation(t, dir)
-	e := terminal[len(terminal)-1]
-	if calls != 1 || e["product_state"] != "Reconnecting" || e["health_generation"] != float64(7) || e["active_generation"] != "unknown" || e["live_protection"] != "unknown" {
-		t.Fatalf("invented terminal authority: calls=%d event=%#v", calls, e)
+	events := readObservation(t, dir)
+	e := events[len(events)-1]
+	if calls != 0 || e["product_state"] != "Unknown" || e["active_generation"] != "unknown" || e["live_protection"] != "unknown" {
+		t.Fatalf("terminal observation inspected status or invented authority: calls=%d event=%#v", calls, e)
 	}
 }
 
