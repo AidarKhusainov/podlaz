@@ -400,7 +400,6 @@ func TestConnectObservationRecordsAuthoritativeDaemonProcessIdentity(t *testing.
 	}
 }
 
-
 func TestConnectObservationSlowStatusDoesNotDelayLifecycle(t *testing.T) {
 	for _, cancelled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("cancelled=%t", cancelled), func(t *testing.T) {
