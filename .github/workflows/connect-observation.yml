@@ -33,6 +33,7 @@ jobs:
           PODLAZ_COMMIT: ${{ github.sha }}
         run: |
           bash scripts/build-deb.sh
+          git fetch --no-tags origin "$BASE_SHA"
           git worktree add --detach "$RUNNER_TEMP/reference-source" "$BASE_SHA"
           (cd "$RUNNER_TEMP/reference-source" && PODLAZ_COMMIT="$BASE_SHA" PODLAZ_DIST_DIR="$RUNNER_TEMP/reference-dist" bash scripts/build-deb.sh)
           sha256sum dist/*.deb "$RUNNER_TEMP/reference-dist/"*.deb >"$RUNNER_TEMP/package-digests.txt"
