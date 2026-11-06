@@ -8,7 +8,7 @@ require (
 	github.com/godbus/dbus/v5 v5.2.4
 	github.com/google/nftables v0.3.1-0.20260430172505-f9b52ed2ba65
 	github.com/vishvananda/netlink v1.3.1
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/sys v0.49.0
 )
 
