@@ -72,8 +72,10 @@ func verifyTunConnectivity(ctx context.Context, plan planner.TunPlan, core tunCo
 		return newTunVerificationError("resolved-link", "The planned TUN link is not ready for functional DNS verification", errors.Join(netexecutor.ErrResolvedLinkNotReady, err))
 	}
 	if err := runProbe(ctx, probe.DNSTimeout, func(probeCtx context.Context) error {
-		_, err := resolveTunDNSNameScoped(probeCtx, plan.TunAddress, probe.DNSName)
-		return err
+		return observedConnectCall(probeCtx, "scoped-dns", func() error {
+			_, err := resolveTunDNSNameScoped(probeCtx, plan.TunAddress, probe.DNSName)
+			return err
+		})
 	}); err != nil {
 		if errors.Is(err, netexecutor.ErrResolvedLinkNotReady) {
 			return newTunVerificationError("resolved-link", "The planned TUN link is not ready for functional DNS verification", err)

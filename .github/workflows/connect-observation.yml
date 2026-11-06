@@ -1,0 +1,63 @@
+name: Experimental connect observation
+on:
+  push:
+    branches: [experiment/protected-connect-diagnostics]
+permissions:
+  contents: read
+jobs:
+  focused-guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      BASE_SHA: b2627e35046b8561d30787f025029bc2ddab9aa5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Focused assertions before privileged guest
+        run: go test ./internal/daemon ./internal/network/executor -run 'TestConnectObservation|TestRollbackCompletionReleaseSummaryLoss|TestResolvedScoped' -count=1
+      - name: Qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables shellcheck
+          bash scripts/ci/install-go-tool.sh nfpm
+      - name: Build exact reference and candidate
+        env:
+          PODLAZ_COMMIT: ${{ github.sha }}
+        run: |
+          bash scripts/build-deb.sh
+          git worktree add --detach "$RUNNER_TEMP/reference-source" "$BASE_SHA"
+          (cd "$RUNNER_TEMP/reference-source" && PODLAZ_COMMIT="$BASE_SHA" PODLAZ_DIST_DIR="$RUNNER_TEMP/reference-dist" bash scripts/build-deb.sh)
+          sha256sum dist/*.deb "$RUNNER_TEMP/reference-dist/"*.deb >"$RUNNER_TEMP/package-digests.txt"
+      - name: Reference installed-package guest, observation absent
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/observation-reference-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/observation-reference-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: b2627e35046b8561d30787f025029bc2ddab9aa5
+          PODLAZ_E2E_OBSERVATION_ENABLED: "false"
+        run: bash scripts/e2e/hosted-connect-observation.sh "$RUNNER_TEMP/reference-dist/podlaz_0.0.0~dev-1_linux_amd64.deb"
+      - name: Experimental installed-package guest, independent failures
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/observation-candidate-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/observation-candidate-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
+          PODLAZ_E2E_OBSERVATION_ENABLED: "true"
+        run: bash scripts/e2e/hosted-connect-observation.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+      - name: Remove private guest material
+        if: always()
+        run: sudo -n rm -rf "$RUNNER_TEMP/observation-reference-private" "$RUNNER_TEMP/observation-candidate-private"
+      - name: Public evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: connect-observation-qualification
+          path: |
+            ${{ runner.temp }}/observation-reference-public/
+            ${{ runner.temp }}/observation-candidate-public/
+            ${{ runner.temp }}/package-digests.txt
+          if-no-files-found: error
+          retention-days: 7

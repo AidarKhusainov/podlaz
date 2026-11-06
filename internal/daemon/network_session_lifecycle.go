@@ -16,6 +16,7 @@ type networkSessionLifecycle struct {
 	lifecycle       lifecycleService
 	continuation    networkSessionContinuationStore
 	terminalReasons *productTerminalReasonStore
+	observation     *connectObservation
 	// Excludes the request-local "connecting" overlay. Sampled only under
 	// the daemon's lifecycle operation lock.
 	verifiedStatus func(context.Context) api.StatusResponse
@@ -27,7 +28,7 @@ type networkSessionLifecycle struct {
 }
 
 func newNetworkSessionLifecycle(lifecycle lifecycleService, continuation networkSessionContinuationStore) *networkSessionLifecycle {
-	return &networkSessionLifecycle{lifecycle: lifecycle, continuation: continuation}
+	return &networkSessionLifecycle{lifecycle: lifecycle, continuation: continuation, observation: newConnectObservation(continuation.runtimeDir)}
 }
 
 func (l *networkSessionLifecycle) productTerminalReasonStore() productTerminalReasonStore {
@@ -37,7 +38,10 @@ func (l *networkSessionLifecycle) productTerminalReasonStore() productTerminalRe
 	return newProductTerminalReasonStore(l.continuation.runtimeDir, l.continuation.readBootID)
 }
 
-func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
+func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (result api.LifecycleResponse, resultErr error) {
+	ctx = l.observation.begin(ctx)
+	observeConnect(ctx, "operation-start", "started", nil)
+	defer func() { l.finishConnectObservation(ctx, resultErr) }()
 	l.continuationMu.Lock()
 	if l.explicitStop {
 		l.continuationMu.Unlock()
@@ -74,6 +78,11 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 	}
 
 	response, connectErr := l.lifecycle.Connect(ctx, request)
+	connectOutcome := "succeeded"
+	if connectErr != nil {
+		connectOutcome = "failed"
+	}
+	observeConnect(ctx, "connect-end", connectOutcome, connectErr)
 	if connectErr == nil {
 		return response, nil
 	}

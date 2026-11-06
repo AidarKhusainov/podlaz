@@ -41,19 +41,29 @@ const protectedPreviousGenerationRestoreTimeout = 2 * time.Minute
 // Registration and explicit-stop cancellation share continuationMu. This closes
 // the check-then-start race where shutdown could declare terminal intent after a
 // restore eligibility check but before Connect(previous) actually began.
-func (l *networkSessionLifecycle) restorePreviousDataPlane(ctx context.Context, previous api.ConnectRequest) error {
+func (l *networkSessionLifecycle) restorePreviousDataPlane(ctx context.Context, previous api.ConnectRequest) (resultErr error) {
 	if l == nil || l.lifecycle == nil {
 		return errors.New("restore previous data plane requires a lifecycle service")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = connectObservationPrevious(ctx)
+	observeConnect(ctx, "restore-start", "started", nil)
+	observationOutcome := "succeeded"
+	defer func() {
+		if resultErr != nil {
+			observationOutcome = "failed"
+		}
+		observeConnect(ctx, "restore-end", observationOutcome, resultErr)
+	}()
 
 	restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), protectedPreviousGenerationRestoreTimeout)
 	l.continuationMu.Lock()
 	if l.explicitStop {
 		l.continuationMu.Unlock()
 		cancel()
+		observationOutcome = "skipped-explicit-stop"
 		return nil
 	}
 	l.restoreGeneration++
@@ -85,6 +95,7 @@ func (l *networkSessionLifecycle) restorePreviousDataPlane(ctx context.Context, 
 		return nil
 	}
 	if stopped && errors.Is(restoreErr, context.Canceled) {
+		observationOutcome = "cancelled-explicit-stop"
 		// Explicit stop owns the terminal teardown from this point. Do not turn
 		// its intentional cancellation into a second replacement failure.
 		return nil

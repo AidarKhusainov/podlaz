@@ -251,7 +251,15 @@ func (p privacyEnvelopeLifecycle) Verify(ctx context.Context) error {
 // Replace may fail after durable narrowing intent has been persisted, leaving
 // the previously verified union composition live. No candidate is mutated until
 // one of the persisted old/union/target compositions verifies exactly.
-func (p privacyEnvelopeLifecycle) CleanupAfterFailedDataPlane(ctx context.Context) error {
+func (p privacyEnvelopeLifecycle) CleanupAfterFailedDataPlane(ctx context.Context) (resultErr error) {
+	observeConnect(ctx, "reconciliation-start", "started", nil)
+	defer func() {
+		outcome := "succeeded"
+		if resultErr != nil {
+			outcome = "failed"
+		}
+		observeConnect(ctx, "reconciliation-end", outcome, resultErr)
+	}()
 	if p.executor == nil {
 		return errors.New("privacy envelope lifecycle has no executor")
 	}

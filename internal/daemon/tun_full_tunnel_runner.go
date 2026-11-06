@@ -66,7 +66,15 @@ type fullTunnelTransactionRunner struct {
 	rollbackTransaction         func(context.Context, string, planner.TunPlan, tunPlanExecutor, tunRollbackChildStopper) error
 }
 
-func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error) {
+func (r *fullTunnelTransactionRunner) run(ctx context.Context) (resultState xrayState, resultErr error) {
+	observeConnect(ctx, "runner-start", "started", nil)
+	defer func() {
+		outcome := "succeeded"
+		if resultErr != nil {
+			outcome = "failed"
+		}
+		observeConnect(ctx, "runner-end", outcome, resultErr)
+	}()
 	if err := r.validatePrivacyEnvelopeConfiguration(); err != nil {
 		return xrayState{}, withTunFailurePhase("privacy-envelope-preflight", "", "not-started", err)
 	}
@@ -81,6 +89,7 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 		return xrayState{}, withTunFailurePhase("transaction-begin", "", "not-started", err)
 	}
 	transactionID := result.TransactionID
+	bindConnectObservationGeneration(ctx, transactionID)
 
 	if err := maybePauseForE2ETunHook(ctx, transactionID); err != nil {
 		status, convergedErr := r.rollbackFailure(ctx, transactionID, emptyTunRollbackPlan(r.plan), err, "E2E hook failure", nil)
@@ -153,17 +162,17 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 	// Initial connectivity verification proves the data plane before any
 	// persistent protection is armed. Protected production sessions then verify
 	// the same path again with the Privacy Envelope active before publication.
-	if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
+	if err := r.verifyObservedConnectivity(ctx, "first"); err != nil {
 		return r.failBeforePrivacyEnvelope(ctx, transactionID, stopCore, err)
 	}
 	if r.requirePrivacyEnvelope {
 		if err := r.armPrivacyEnvelope(ctx, r.plan); err != nil {
 			return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-envelope-arm", err)
 		}
-		if err := r.verifyPrivacyEnvelope(ctx); err != nil {
+		if err := observedConnectCall(ctx, "envelope-verify", func() error { return r.verifyPrivacyEnvelope(ctx) }); err != nil {
 			return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-envelope-verify", err)
 		}
-		if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
+		if err := r.verifyObservedConnectivity(ctx, "repeated"); err != nil {
 			return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-connectivity-verify", err)
 		}
 	}
@@ -189,6 +198,7 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 		return xrayState{}, withTunFailurePhase("commit", transactionID, "completed", err)
 	}
 
+	observeConnect(ctx, "commit", "succeeded", nil)
 	return active, nil
 }
 
@@ -259,7 +269,7 @@ func (r *fullTunnelTransactionRunner) rollbackDataPlaneThenPrivacy(
 ) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
 	defer cancel()
-	if err := r.rollbackTransaction(cleanupCtx, transactionID, plan, r.executor, stopChildren); err != nil {
+	if err := observedConnectCall(ctx, "rollback", func() error { return r.rollbackTransaction(cleanupCtx, transactionID, plan, r.executor, stopChildren) }); err != nil {
 		return fmt.Errorf("rollback TUN data plane while privacy envelope remains armed: %w", err)
 	}
 	if err := r.cleanupPrivacyEnvelope(cleanupCtx); err != nil {
@@ -301,7 +311,7 @@ func (r *fullTunnelTransactionRunner) rollbackNetworkMutation(ctx context.Contex
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
 	defer cancel()
-	return mutationErr.RollbackWithChildStopper(cleanupCtx, r.executor, stopChildren)
+	return observedConnectCall(ctx, "rollback", func() error { return mutationErr.RollbackWithChildStopper(cleanupCtx, r.executor, stopChildren) })
 }
 
 func (r *fullTunnelTransactionRunner) rollbackFailure(ctx context.Context, transactionID string, plan planner.TunPlan, cause error, reason string, stopChildren tunRollbackChildStopper) (string, error) {
@@ -314,7 +324,7 @@ func (r *fullTunnelTransactionRunner) rollbackFailure(ctx context.Context, trans
 func (r *fullTunnelTransactionRunner) rollback(ctx context.Context, transactionID string, plan planner.TunPlan, executor tunPlanExecutor, stopChildren tunRollbackChildStopper) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
 	defer cancel()
-	return r.rollbackTransaction(cleanupCtx, transactionID, plan, executor, stopChildren)
+	return observedConnectCall(ctx, "rollback", func() error { return r.rollbackTransaction(cleanupCtx, transactionID, plan, executor, stopChildren) })
 }
 
 func (r *fullTunnelTransactionRunner) setDefaults() {
@@ -438,4 +448,17 @@ func tunLinkAuthoritativelyAbsentBeforeCore(snapshot netsnapshot.Snapshot, name 
 		}
 	}
 	return matched
+}
+
+func (r *fullTunnelTransactionRunner) verifyObservedConnectivity(ctx context.Context, pass string) error {
+	if s := connectObservationFrom(ctx); s != nil {
+		copy := *s
+		copy.pass = pass
+		ctx = context.WithValue(ctx, connectObservationKey{}, &copy)
+	}
+	event := "connectivity-1"
+	if pass == "repeated" {
+		event = "connectivity-2"
+	}
+	return observedConnectCall(ctx, event, func() error { return r.verifyConnectivity(ctx, r.plan, r.corePlan) })
 }
