@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import json
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -33,16 +34,20 @@ def restored_trace():
     event('A', '2', 'commit')
     event('A', '2', 'restore-end')
     event('B', '1', 'operation-end', 'failed', lifecycle='returned-failure', session='resume',
-          protection_authority='armed', live_protection='unknown', product_state='Reconnecting', active_generation='2')
+          protection_authority='armed', live_protection='unknown', product_state='Unknown', active_generation='unknown')
     return rows
 
 
 class VerdictTest(unittest.TestCase):
-    def validate(self, rows):
+    def validate(self, rows, boundary=None):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'events.jsonl'
             path.write_text(''.join(json.dumps(r)+'\n' for r in rows))
-            return verdict.validate(path, 'b-first', '4242-42')
+            now = int(time.time())
+            if boundary is None:
+                boundary = dict(source='4242-42', last_operation=0, last_elapsed_us=-1,
+                                captured_unix=now, window_until=now+60)
+            return verdict.validate(path, 'b-first', '4242-42', boundary)
 
     def test_reconnecting_after_verified_restore_is_accepted(self):
         self.assertEqual('pass', self.validate(restored_trace())['verdict'])
@@ -53,6 +58,44 @@ class VerdictTest(unittest.TestCase):
                         protection_authority='absent', product_state='Disconnected', active_generation='unknown')
         with self.assertRaises(AssertionError):
             self.validate(rows)
+
+    def test_completed_old_operation_from_same_process_does_not_qualify_new_request(self):
+        rows = restored_trace()
+        now = int(time.time())
+        with self.assertRaises(AssertionError):
+            self.validate(rows, dict(source='4242-42', last_operation=1,
+                                     last_elapsed_us=rows[-1]['elapsed_us'],
+                                     captured_unix=now, window_until=now+60))
+
+    def test_observer_expired_or_exhausted_before_request(self):
+        now = int(time.time())
+        for boundary in (
+            dict(source='4242-42', last_operation=0, last_elapsed_us=-1, captured_unix=now, window_until=now),
+            dict(source='4242-42', last_operation=16, last_elapsed_us=-1, captured_unix=now, window_until=now+60),
+        ):
+            with self.subTest(boundary=boundary), self.assertRaises(AssertionError):
+                self.validate(restored_trace(), boundary)
+
+    def test_contradictory_new_operation_or_partial_stream_rejected(self):
+        rows=restored_trace()
+        other=copy.deepcopy(rows[0]); other.update(operation=2,sequence=1,elapsed_us=rows[-1]['elapsed_us']+1)
+        with self.assertRaises(AssertionError): self.validate(rows+[other])
+        with self.assertRaises(AssertionError): self.validate(rows[:-1])
+        broken=copy.deepcopy(rows)
+        broken[3]['sequence']=50
+        with self.assertRaises(AssertionError): self.validate(broken)
+
+    def test_capture_boundary_requires_unexpired_process_and_complete_prior_operations(self):
+        now=int(time.time())
+        with tempfile.TemporaryDirectory() as d:
+            file=Path(d)/'events.jsonl'
+            file.write_text(''.join(json.dumps(r)+'\\n' for r in restored_trace()))
+            b=verdict.capture_boundary(file,'4242-42',now+60,now=now)
+            self.assertEqual(1,b['last_operation'])
+            with self.assertRaises(AssertionError): verdict.capture_boundary(file,'4242-42',now,now=now)
+            with self.assertRaises(AssertionError): verdict.capture_boundary(file,'4243-42',now+60,now=now)
+            file.write_text(''.join(json.dumps(r)+'\\n' for r in restored_trace()[:-1]))
+            with self.assertRaises(AssertionError): verdict.capture_boundary(file,'4242-42',now+60,now=now)
 
     def test_missing_restore_pass_cannot_be_hidden_by_commit(self):
         rows = [r for r in restored_trace() if r['event'] != 'connectivity-2-end']
@@ -89,4 +132,6 @@ class FreshnessTest(unittest.TestCase):
             path.write_text(''.join(json.dumps(r)+'\n' for r in restored_trace()))
             for identity in ('4243-42','4242-43'):
                 with self.subTest(identity=identity), self.assertRaises(AssertionError):
-                    verdict.validate(path, 'b-first', identity)
+                    now=int(time.time())
+                    verdict.validate(path, 'b-first', identity, dict(source='4242-42', last_operation=0,
+                        last_elapsed_us=-1, captured_unix=now, window_until=now+60))

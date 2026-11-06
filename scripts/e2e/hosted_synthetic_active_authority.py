@@ -300,7 +300,13 @@ class NftTable:
     chains: dict[str, NftChain] = field(default_factory=dict)
 
 
-def parse_nft_ruleset(path: Path) -> dict[tuple[str, str], NftTable]:
+def parse_nft_ruleset(
+    path: Path, owned: set[tuple[str, str]]
+) -> dict[tuple[str, str], NftTable]:
+    # Ownership comes only from validated durable authorities. Foreign tables
+    # may have ordinary chains without priorities and rules without comments.
+    # Select the exact (family, table) before parsing their contents.
+    require(len(owned) == 2, "nftables owned identity ambiguity")
     root = load_json(path, "nftables ruleset")
     entries = list_value(root.get("nftables") or [], "nftables entries")
     tables: dict[tuple[str, str], NftTable] = {}
@@ -310,41 +316,38 @@ def parse_nft_ruleset(path: Path) -> dict[tuple[str, str], NftTable]:
             raise AuthorityMismatch("nftables entry shape")
         if "metainfo" in entry:
             continue
-        if "table" in entry:
-            table = dict_value(entry["table"], "nftables table")
-            family, name = clean_string(table.get("family")), clean_string(table.get("name"))
-            key = (family, name)
-            require(family and name and key not in tables, "nftables table identity")
-            flags = table.get("flags") or []
+        kind = next(iter(entry))
+        if kind not in {"table", "chain", "rule"}:
+            continue
+        body = dict_value(entry[kind], "nftables identity")
+        family = clean_string(body.get("family"))
+        table_name = clean_string(body.get("name" if kind == "table" else "table"))
+        key = (family, table_name)
+        # Missing identity is ambiguous, not positive foreign ownership.
+        require(family and table_name, "nftables entry identity")
+        if key not in owned:
+            continue
+        if kind == "table":
+            require(key not in tables, "nftables table identity")
+            flags = body.get("flags") or []
             require(isinstance(flags, list), "nftables table flags")
-            tables[key] = NftTable(
-                family,
-                name,
-                tuple(sorted(clean_string(item) for item in flags)),
-            )
-        elif "chain" in entry:
-            chain = dict_value(entry["chain"], "nftables chain")
-            key = (clean_string(chain.get("family")), clean_string(chain.get("table")))
+            tables[key] = NftTable(family, table_name, tuple(sorted(clean_string(item) for item in flags)))
+        elif kind == "chain":
             table = tables.get(key)
             require(table is not None, "nftables chain table")
-            name = clean_string(chain.get("name"))
+            name = clean_string(body.get("name"))
             require(name and name not in table.chains, "nftables chain identity")
-            priority = chain.get("prio", chain.get("priority"))
-            require(
-                isinstance(priority, int) and not isinstance(priority, bool),
-                "nftables chain priority",
-            )
+            priority = body.get("prio", body.get("priority"))
+            require(isinstance(priority, int) and not isinstance(priority, bool), "nftables chain priority")
             table.chains[name] = NftChain(
                 name=name,
-                type=clean_string(chain.get("type")),
-                hook=clean_string(chain.get("hook")),
+                type=clean_string(body.get("type")),
+                hook=clean_string(body.get("hook")),
                 priority=priority,
-                policy=clean_string(chain.get("policy")),
+                policy=clean_string(body.get("policy")),
             )
-        elif "rule" in entry:
-            rules.append(dict_value(entry["rule"], "nftables rule"))
         else:
-            continue
+            rules.append(body)
 
     for rule in rules:
         key = (clean_string(rule.get("family")), clean_string(rule.get("table")))
@@ -773,7 +776,17 @@ def verify(args: argparse.Namespace) -> None:
     )
     validate_marked_runtime_config(protection, runtime_config)
     validate_resolved(tx, dns_path, domain_path, default_path, tun_interface)
-    tables = parse_nft_ruleset(nft_path)
+    desired_firewall = dict_value(
+        dict_value(tx.get("desired_plan") or {}, "desired plan").get("nftables") or {},
+        "desired nftables",
+    )
+    require(desired_firewall.get("owner") == FIREWALL_OWNER, "desired nftables owner")
+    owned = {
+        (clean_string(desired_firewall.get("family")), clean_string(desired_firewall.get("table"))),
+        (clean_string(protection.get("family")), clean_string(protection.get("table"))),
+    }
+    require(len(owned) == 2 and all(family and table for family, table in owned), "nftables owned identity ambiguity")
+    tables = parse_nft_ruleset(nft_path, owned)
     validate_data_plane_nft(tx, tables)
     validate_privacy_envelope(protection, tables)
 

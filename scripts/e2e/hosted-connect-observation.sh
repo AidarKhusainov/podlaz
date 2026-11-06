@@ -123,13 +123,33 @@ PYID
 IDENTITY
 }
 
+observation_boundary() {
+  local mode="$1" source pid until
+  [[ "${OBS_ENABLED}" == true ]] || return 0
+  source="$(observation_source_identity)" || return 1
+  pid="${source%%-*}"
+  until="$(guest_exec python3 - "$pid" <<'PY'
+from pathlib import Path
+import sys
+values = Path(f"/proc/{int(sys.argv[1])}/environ").read_bytes().split(b"\\0")
+matching = [v.split(b"=", 1)[1] for v in values if v.startswith(b"PODLAZ_CONNECT_OBSERVATION_UNTIL=")]
+assert len(matching) == 1
+print(int(matching[0]))
+PY
+)" || return 1
+  guest_exec python3 /workspace/scripts/e2e/lib/connect_observation_verdict.py \\
+    boundary "${OBS_FILE}" "${source}" "${until}" \\
+    >"${PRIVATE_ROOT}/observation-${mode}-boundary.json"
+}
+
 observation_save() {
   local mode="$1" path="${PRIVATE_ROOT}/observation-${1}.jsonl" source_before source_after
   source_before="$(observation_source_identity)"
   guest_exec cat "${OBS_FILE}" >"${path}"
   source_after="$(observation_source_identity)"
   [[ "$source_before" == "$source_after" ]]
-  python3 "${SCRIPT_DIR}/lib/connect_observation_verdict.py" "${path}" "${mode}" "$source_before" >>"${OBS_RESULTS}"
+  python3 "${SCRIPT_DIR}/lib/connect_observation_verdict.py" "${path}" "${mode}" "$source_before" \\
+    "${PRIVATE_ROOT}/observation-${mode}-boundary.json" >>"${OBS_RESULTS}"
   install -m 0600 "${path}" "${E2E_ARTIFACT_DIR}/connect-observation-${mode}.jsonl"
 }
 
@@ -158,7 +178,7 @@ observation_query_ready() { guest_exec test -f "${OBS_ROOT}/failed-query" >/dev/
 observation_restore_ready() { guest_exec test -f "${OBS_ROOT}/restore-ready" >/dev/null 2>&1; }
 
 qualify_profile_transitions() {
-  local first second first_id session table mode rc started elapsed
+  local first second first_id second_id="" session table mode rc started elapsed previous_tx new_tx expected_id
   first="$(guest_exec cat "${GUEST_PRIVATE}/profile-selector")"
   first_id="$(guest_exec jq -er '.profile_id' "${GUEST_PRIVATE}/status.json")"
   session="$(guest_exec jq -er '.session_id' /run/podlaz/network-session-continuation.json)"
@@ -172,6 +192,8 @@ qualify_profile_transitions() {
   observation_watch_start
   for selector in "${second}" "${first}" "${second}" "${first}" "${second}" "${first}"; do
     mark_failure diagnostic_unknown observation.successful-transition
+    observation_boundary none
+    previous_tx="$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")"
     started="$(date +%s%N)"
     rc=0
     run_guest_user /usr/bin/podlaz connect "${selector}" >"${PRIVATE_ROOT}/observation-success.stdout" 2>"${PRIVATE_ROOT}/observation-success.stderr" || rc=$?
@@ -183,7 +205,19 @@ qualify_profile_transitions() {
     # the inherited transition suite; waiting does not retry a Connect.
     mark_failure diagnostic_unknown observation.transition-verified-active
     if ! wait_guest_status verified-active 150; then observation_failed_command; return 1; fi
-    assert_verified_active_authority
+    new_tx="$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")"
+    [[ "${new_tx}" != "${previous_tx}" ]] || fail "profile switch reused previous transaction"
+    expected_id="${first_id}"
+    if [[ "${selector}" == "${second}" ]]; then
+      if [[ -z "${second_id}" ]]; then
+        second_id="$(guest_exec jq -er '.profile_id' "${GUEST_PRIVATE}/status.json")"
+        [[ "${second_id}" != "${first_id}" ]] || fail "A-to-B did not replace profile identity"
+      fi
+      expected_id="${second_id}"
+    fi
+    assert_transition_verified_active "${expected_id}" "${session}" "${table}"
+    [[ "$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")" == "${new_tx}" ]] || return 1
+    if [[ "${OBS_ENABLED}" == true ]]; then observation_save none; fi
   done
   observation_watch_stop
   assert_transition_verified_active "${first_id}" "${session}" "${table}"
@@ -203,7 +237,6 @@ qualify_profile_transitions() {
     guest_exec test ! -e "${OBS_FILE}"
     return
   fi
-  observation_save none
 
   for mode in b-first b-second b-timeout restore-prequery restore-query rollback reconciliation cancelled-client; do
     mark_failure diagnostic_unknown "observation.${mode}"
@@ -215,6 +248,7 @@ qualify_profile_transitions() {
       guest_exec /bin/bash -c 'for ((i=0;i<500;i++)); do if test -f "$1/disable-core-ready"; then chmod 0600 /usr/lib/podlaz/xray; touch "$1/disable-core-continue"; exit; fi; sleep 0.02; done; exit 1' _ "${OBS_ROOT}" >"${PRIVATE_ROOT}/prequery-controller.log" 2>&1 &
       OBS_CONTROLLER_PID=$!
     fi
+    observation_boundary "${mode}"
     started="$(date +%s%N)"
     if [[ "${mode}" == cancelled-client ]]; then
       observation_cancelled_client "${second}"
