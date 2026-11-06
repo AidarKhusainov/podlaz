@@ -230,7 +230,11 @@ qualify_profile_transitions() {
   done
   observation_watch_stop
   assert_transition_verified_active "${first_id}" "${session}" "${table}"
-  run_active_traffic_checks
+  # The inherited initial TUN acceptance already owns tun.system_dns/https.
+  # Repeat the real probes without recording a duplicate public evidence key.
+  guest_exec resolvectl flush-caches
+  guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
+  guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
   if [[ "${OBS_ENABLED}" != true ]]; then
     observation_arm b-timeout
     observation_watch_start
