@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -394,5 +397,189 @@ func TestConnectObservationRecordsAuthoritativeDaemonProcessIdentity(t *testing.
 		if event["source"] != expected {
 			t.Fatalf("missing exact source process: %#v", event["source"])
 		}
+	}
+}
+
+
+func TestConnectObservationSlowStatusDoesNotDelayLifecycle(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cancelled=%t", cancelled), func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("PODLAZ_CONNECT_OBSERVATION_UNTIL", strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10))
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			deadline, _ := ctx.Deadline()
+			sentinel := errors.New("lifecycle result")
+			want := api.LifecycleResponse{Connection: "inactive", Mode: planner.ModeTun}
+			var calls atomic.Int32
+			l := newNetworkSessionLifecycle(observationTestLifecycle{connect: func(callCtx context.Context, _ api.ConnectRequest) (api.LifecycleResponse, error) {
+				calls.Add(1)
+				if got, ok := callCtx.Deadline(); !ok || got != deadline {
+					t.Error("observer changed the product deadline")
+				}
+				if cancelled {
+					cancel()
+				}
+				return want, sentinel
+			}}, newNetworkSessionContinuationStore(dir, fixedBootID("boot-a")))
+			blocked := make(chan struct{})
+			var release sync.Once
+			unblock := func() { release.Do(func() { close(blocked) }) }
+			defer unblock()
+			l.verifiedStatus = func(context.Context) api.StatusResponse {
+				// XrayManager.Status performs filesystem inspection while holding
+				// its mutex and does not use the supplied context.
+				<-blocked
+				return api.StatusResponse{Connection: "inactive"}
+			}
+			type result struct {
+				response api.LifecycleResponse
+				err      error
+			}
+			done := make(chan result, 1)
+			go func() {
+				response, err := l.Connect(ctx, testContinuationRequest())
+				done <- result{response: response, err: err}
+			}()
+			var got result
+			select {
+			case got = <-done:
+			case <-time.After(time.Second):
+				t.Error("terminal observation delayed Connect on an unresponsive status read")
+				unblock()
+				select {
+				case got = <-done:
+				case <-time.After(time.Second):
+					t.Fatal("Connect did not return after releasing the status read")
+				}
+			}
+			unblock()
+			if calls.Load() != 1 || got.err != sentinel || !reflect.DeepEqual(got.response, want) {
+				t.Fatalf("diagnostics changed the lifecycle result: calls=%d response=%#v err=%v", calls.Load(), got.response, got.err)
+			}
+		})
+	}
+}
+
+func TestConnectObservationTerminalSkipsUnavailableStream(t *testing.T) {
+	for _, mode := range []string{"expired", "full-queue", "event-limit"} {
+		t.Run(mode, func(t *testing.T) {
+			store := newNetworkSessionContinuationStore(t.TempDir(), fixedBootID("boot-a"))
+			if err := store.Save(testContinuationRequest()); err != nil {
+				t.Fatal(err)
+			}
+			stateReads, statusReads := 0, 0
+			store.readBootID = func() (string, error) {
+				stateReads++
+				return "boot-a", nil
+			}
+			o := &connectObservation{started: time.Now(), until: time.Now().Add(time.Minute), events: make(chan connectObservationEvent, 1)}
+			ctx := o.begin(context.Background())
+			scope := connectObservationFrom(ctx)
+			switch mode {
+			case "expired":
+				o.until = time.Now().Add(-time.Second)
+			case "full-queue":
+				o.events <- connectObservationEvent{}
+			case "event-limit":
+				scope.operation.sequence.Store(connectObservationLimit)
+			}
+			l := &networkSessionLifecycle{continuation: store, verifiedStatus: func(context.Context) api.StatusResponse {
+				statusReads++
+				return api.StatusResponse{Connection: "inactive"}
+			}}
+			l.finishConnectObservation(ctx, nil)
+			if stateReads != 0 || statusReads != 0 {
+				t.Fatalf("discarded terminal still inspected product state: state=%d status=%d", stateReads, statusReads)
+			}
+			if lost := scope.operation.lost.Load(); lost != 1 {
+				t.Fatalf("discarded terminal did not record evidence loss: %d", lost)
+			}
+		})
+	}
+}
+
+func TestConnectObservationStateReadCannotHoldLifecycle(t *testing.T) {
+	store := newNetworkSessionContinuationStore(t.TempDir(), fixedBootID("boot-a"))
+	if err := store.Save(testContinuationRequest()); err != nil {
+		t.Fatal(err)
+	}
+	blocked := make(chan struct{})
+	var release sync.Once
+	unblock := func() { release.Do(func() { close(blocked) }) }
+	defer unblock()
+	observedStore := store
+	observedStore.readBootID = func() (string, error) {
+		<-blocked
+		return "boot-a", nil
+	}
+	o := &connectObservation{started: time.Now(), until: time.Now().Add(time.Minute), events: make(chan connectObservationEvent, 1)}
+	ctx := o.begin(context.Background())
+	l := &networkSessionLifecycle{continuation: observedStore}
+	done := make(chan struct{})
+	go func() {
+		l.finishConnectObservation(ctx, nil)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Error("terminal observation waited for a blocked durable-state read")
+		unblock()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("terminal observation did not return after releasing the state read")
+		}
+		return
+	}
+	// Moving the same blocking read to a goroutine is insufficient if it keeps
+	// the product's state mutation lock and stalls the following lifecycle.
+	next := make(chan error, 1)
+	go func() {
+		_, _, err := store.stateStore().Load()
+		next <- err
+	}()
+	select {
+	case err := <-next:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Error("diagnostic state read held the product state lock after returning")
+		unblock()
+		select {
+		case <-next:
+		case <-time.After(time.Second):
+			t.Fatal("product state read did not return after releasing diagnostics")
+		}
+	}
+}
+
+func TestConnectObservationFailedInspectionCannotInventTerminalAuthority(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PODLAZ_CONNECT_OBSERVATION_UNTIL", strconv.FormatInt(time.Now().Add(time.Minute).Unix(), 10))
+	want := api.LifecycleResponse{Connection: "active", Mode: planner.ModeTun}
+	l := newNetworkSessionLifecycle(observationTestLifecycle{connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+		return want, nil
+	}}, newNetworkSessionContinuationStore(dir, fixedBootID("boot-a")))
+	l.verifiedStatus = func(context.Context) api.StatusResponse {
+		return api.StatusResponse{Connection: "unknown", InspectionWarnings: []api.RecoveryWarning{{Target: "transaction state", Message: "private.example.test unreadable"}}}
+	}
+	got, err := l.Connect(context.Background(), testContinuationRequest())
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("failed diagnostic inspection changed Connect: response=%#v err=%v", got, err)
+	}
+	events := readObservation(t, dir)
+	terminal := events[len(events)-1]
+	if terminal["product_state"] != "Unknown" || terminal["active_generation"] != "unknown" || terminal["live_protection"] != "unknown" || terminal["lifecycle"] != "returned-success" {
+		t.Fatalf("failed inspection invented terminal evidence: %#v", terminal)
+	}
+	data, err := json.Marshal(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "private.example.test") {
+		t.Fatal("failed inspection leaked raw diagnostic text")
 	}
 }

@@ -1,6 +1,8 @@
 name: Experimental connect observation
 on:
   workflow_dispatch:
+  push:
+    branches: [experiment/protected-connect-diagnostics]
 permissions:
   contents: read
 jobs:
@@ -18,7 +20,17 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Focused assertions before privileged guest
-        run: go test ./internal/daemon ./internal/network/executor -run 'TestConnectObservation|TestRollbackCompletionReleaseSummaryLoss|TestResolvedScoped' -count=1
+        run: |
+          set -o pipefail
+          go test ./internal/daemon ./internal/network/executor -run 'TestConnectObservation|TestRollbackCompletionReleaseSummaryLoss|TestResolvedScoped' -count=1 2>&1 | tee "$RUNNER_TEMP/connect-observation-components.txt"
+      - name: Component assertion evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: connect-observation-components
+          path: ${{ runner.temp }}/connect-observation-components.txt
+          if-no-files-found: error
+          retention-days: 7
       - name: Qualification tools
         run: |
           sudo apt-get update
