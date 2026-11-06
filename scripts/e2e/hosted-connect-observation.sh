@@ -131,14 +131,14 @@ observation_boundary() {
   until="$(guest_exec python3 - "$pid" <<'PY'
 from pathlib import Path
 import sys
-values = Path(f"/proc/{int(sys.argv[1])}/environ").read_bytes().split(b"\\0")
+values = Path(f"/proc/{int(sys.argv[1])}/environ").read_bytes().split(b"\0")
 matching = [v.split(b"=", 1)[1] for v in values if v.startswith(b"PODLAZ_CONNECT_OBSERVATION_UNTIL=")]
 assert len(matching) == 1
 print(int(matching[0]))
 PY
 )" || return 1
-  guest_exec python3 /workspace/scripts/e2e/lib/connect_observation_verdict.py \\
-    boundary "${OBS_FILE}" "${source}" "${until}" \\
+  guest_exec python3 /workspace/scripts/e2e/lib/connect_observation_verdict.py \
+    boundary "${OBS_FILE}" "${source}" "${until}" \
     >"${PRIVATE_ROOT}/observation-${mode}-boundary.json"
 }
 
@@ -148,7 +148,7 @@ observation_save() {
   guest_exec cat "${OBS_FILE}" >"${path}"
   source_after="$(observation_source_identity)"
   [[ "$source_before" == "$source_after" ]]
-  python3 "${SCRIPT_DIR}/lib/connect_observation_verdict.py" "${path}" "${mode}" "$source_before" \\
+  python3 "${SCRIPT_DIR}/lib/connect_observation_verdict.py" "${path}" "${mode}" "$source_before" \
     "${PRIVATE_ROOT}/observation-${mode}-boundary.json" >>"${OBS_RESULTS}"
   install -m 0600 "${path}" "${E2E_ARTIFACT_DIR}/connect-observation-${mode}.jsonl"
 }
