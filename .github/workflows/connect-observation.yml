@@ -25,6 +25,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables shellcheck
           bash scripts/ci/install-go-tool.sh nfpm
+          bash scripts/ci/install-go-tool.sh actionlint
+      - name: Repository workflow and shell contracts
+        run: bash scripts/ci/workflow-lint.sh
       - name: Build exact reference and candidate
         env:
           PODLAZ_COMMIT: ${{ github.sha }}

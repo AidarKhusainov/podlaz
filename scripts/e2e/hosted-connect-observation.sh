@@ -27,7 +27,7 @@ import json,re,sys
 from pathlib import Path
 root=Path(sys.argv[1])
 scenarios={'none','b-first','b-second','b-timeout','restore-prequery','restore-query','rollback','reconciliation','cancelled-client'}
-allowed={'hosted-synthetic-tun.txt','connect-observation.jsonl'}|{f'connect-observation-{s}.jsonl' for s in scenarios}
+allowed={'hosted-synthetic-tun.txt','connect-observation.jsonl','connect-failure-summary.jsonl'}|{f'connect-observation-{s}.jsonl' for s in scenarios}
 for p in root.iterdir():
     assert p.name in allowed and p.is_file() and not p.is_symlink(), 'unapproved public artifact'
     raw=p.read_text()
@@ -39,6 +39,18 @@ for p in root.iterdir():
                 if isinstance(v,str):
                     assert re.fullmatch(r'[A-Za-z0-9_-]{1,80}',v), 'unexpected diagnostic string'
 PRIVACY
+}
+
+observation_failed_command() {
+  # Keep only already structured daemon enums, never the raw journal or IDs.
+  guest_exec journalctl -u podlazd.service -n 100 --no-pager -o cat | python3 -c '
+import json,re,sys
+allowed={"phase","rollback_status","classification","tun_primary_classification"}
+for line in sys.stdin:
+ if "connect request failed" not in line: continue
+ row={key:value for key,value in re.findall(r"([a-z_]+)=([A-Za-z0-9_-]+)",line) if key in allowed}
+ print(json.dumps(row,sort_keys=True))
+' >>"${E2E_ARTIFACT_DIR}/connect-failure-summary.jsonl"
 }
 
 create_foreign_sentinel() {
@@ -140,10 +152,19 @@ qualify_profile_transitions() {
   observation_reset
   observation_watch_start
   for selector in "${second}" "${first}" "${second}" "${first}" "${second}" "${first}"; do
+    mark_failure diagnostic_unknown observation.successful-transition
     started="$(date +%s%N)"
-    run_guest_user /usr/bin/podlaz connect "${selector}" >"${PRIVATE_ROOT}/observation-success.stdout" 2>"${PRIVATE_ROOT}/observation-success.stderr"
+    rc=0
+    run_guest_user /usr/bin/podlaz connect "${selector}" >"${PRIVATE_ROOT}/observation-success.stdout" 2>"${PRIVATE_ROOT}/observation-success.stderr" || rc=$?
+    if (( rc != 0 )); then observation_failed_command; return "${rc}"; fi
     elapsed="$((($(date +%s%N) - started) / 1000))"
     printf '{"scenario":"successful-transition","enabled":"%s","elapsed_us":%s}\n' "${OBS_ENABLED}" "${elapsed}" >>"${OBS_RESULTS}"
+    # A successful Connect can return while health initialization is pending.
+    # The next canonical replacement requires the same verified-active gate as
+    # the inherited transition suite; waiting does not retry a Connect.
+    mark_failure diagnostic_unknown observation.transition-verified-active
+    if ! wait_guest_status verified-active 150; then observation_failed_command; return 1; fi
+    assert_verified_active_authority
   done
   observation_watch_stop
   assert_transition_verified_active "${first_id}" "${session}" "${table}"
