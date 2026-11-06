@@ -89,12 +89,12 @@ class VerdictTest(unittest.TestCase):
         now=int(time.time())
         with tempfile.TemporaryDirectory() as d:
             file=Path(d)/'events.jsonl'
-            file.write_text(''.join(json.dumps(r)+'\\n' for r in restored_trace()))
+            file.write_text(''.join(json.dumps(r)+'\n' for r in restored_trace()))
             b=verdict.capture_boundary(file,'4242-42',now+60,now=now)
             self.assertEqual(1,b['last_operation'])
             with self.assertRaises(AssertionError): verdict.capture_boundary(file,'4242-42',now,now=now)
             with self.assertRaises(AssertionError): verdict.capture_boundary(file,'4243-42',now+60,now=now)
-            file.write_text(''.join(json.dumps(r)+'\\n' for r in restored_trace()[:-1]))
+            file.write_text(''.join(json.dumps(r)+'\n' for r in restored_trace()[:-1]))
             with self.assertRaises(AssertionError): verdict.capture_boundary(file,'4242-42',now+60,now=now)
 
     def test_missing_restore_pass_cannot_be_hidden_by_commit(self):
