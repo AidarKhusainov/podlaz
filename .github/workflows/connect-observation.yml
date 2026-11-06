@@ -37,6 +37,15 @@ jobs:
           python3 -m unittest scripts.e2e.tests.test_connect_observation_verdict -v
       - name: Executable failure-step and teardown regression
         run: bash scripts/e2e/tests/connect-observation-failure-steps.sh
+      - name: Full source and concurrency qualification
+        run: |
+          test -z "$(gofmt -l .)"
+          go test ./...
+          go vet ./...
+          bash scripts/ci/repository-structure.sh --final
+          go test -race ./internal/daemon ./internal/network/executor
+          bash scripts/ci/install-go-tool.sh govulncheck
+          "$(go env GOPATH)/bin/govulncheck" ./...
       - name: Qualification tools
         run: |
           sudo apt-get update
@@ -61,6 +70,13 @@ jobs:
           PODLAZ_E2E_CANDIDATE_COMMIT: b2627e35046b8561d30787f025029bc2ddab9aa5
           PODLAZ_E2E_OBSERVATION_ENABLED: "false"
         run: bash scripts/e2e/hosted-connect-observation.sh "$RUNNER_TEMP/reference-dist/podlaz_0.0.0~dev-1_linux_amd64.deb"
+      - name: Candidate installed-package guest, observer disabled control
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/observation-candidate-off-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/observation-candidate-off-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
+          PODLAZ_E2E_OBSERVATION_ENABLED: "false"
+        run: bash scripts/e2e/hosted-connect-observation.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb
       - name: Experimental installed-package guest, independent failures
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/observation-candidate-private
@@ -68,9 +84,36 @@ jobs:
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
           PODLAZ_E2E_OBSERVATION_ENABLED: "true"
         run: bash scripts/e2e/hosted-connect-observation.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+      - name: Compare candidate observer on and off under equivalent guest setup
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, statistics
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])
+          def measurements(folder, enabled, scenario, minimum):
+              rows=[json.loads(line) for line in (root/folder/'connect-observation.jsonl').read_text().splitlines()]
+              durations=[r['elapsed_us'] for r in rows if r.get('scenario')==scenario and r.get('enabled')==enabled]
+              if len(durations)<minimum or any(type(x) is not int or x<=0 for x in durations):
+                  raise SystemExit(f'incomplete candidate {enabled} {scenario} comparison')
+              return durations
+          report={'candidate_sha':os.environ['CANDIDATE_SHA'],
+                  'comparability':'same-candidate-separate-disposable-guests-command-wrappers-present',
+                  'release_reference':'separate-control-not-in-on-off-comparison'}
+          for scenario,minimum in [('successful-transition',6),('b-timeout',1),('lost-ack',1)]:
+              off=measurements('observation-candidate-off-public','false',scenario,minimum)
+              on=measurements('observation-candidate-public','true',scenario,minimum)
+              off_median=statistics.median(off)
+              on_median=statistics.median(on)
+              report[scenario]={'off_samples':len(off),'on_samples':len(on),
+                                'off_median_us':off_median,'on_median_us':on_median,
+                                'median_ratio':round(on_median/off_median,4)}
+          (root/'observation-comparison.json').write_text(json.dumps(report,sort_keys=True)+'\n')
+          PY
       - name: Remove private guest material
         if: always()
-        run: sudo -n rm -rf "$RUNNER_TEMP/observation-reference-private" "$RUNNER_TEMP/observation-candidate-private"
+        run: sudo -n rm -rf "$RUNNER_TEMP/observation-reference-private" "$RUNNER_TEMP/observation-candidate-private" "$RUNNER_TEMP/observation-candidate-off-private"
       - name: Public evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -79,6 +122,8 @@ jobs:
           path: |
             ${{ runner.temp }}/observation-reference-public/
             ${{ runner.temp }}/observation-candidate-public/
+            ${{ runner.temp }}/observation-candidate-off-public/
             ${{ runner.temp }}/package-digests.txt
+            ${{ runner.temp }}/observation-comparison.json
           if-no-files-found: error
           retention-days: 7

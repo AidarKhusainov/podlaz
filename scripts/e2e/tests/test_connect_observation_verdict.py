@@ -116,6 +116,47 @@ class VerdictTest(unittest.TestCase):
             with self.subTest(kind=kind), self.assertRaises(AssertionError):
                 self.validate(rows)
 
+
+def two_committed_operations():
+    events=[]
+    for operation, generation in ((1,'1'),(2,'2')):
+        def add(name,outcome='succeeded',**fields):
+            seq=1+sum(e['operation']==operation for e in events)
+            events.append(dict(source='4242-42',schema=1,operation=operation,sequence=seq,
+                elapsed_us=len(events)*100,role='B',generation=generation,event=name,
+                outcome=outcome,phase='unknown',classification='none',
+                dns_cause='unknown',rollback='unknown',lost_before=0,**fields))
+        add('operation-start','started')
+        add('generation-bound')
+        add('connectivity-1-end',**{'pass':'first'})
+        add('envelope-verify-end')
+        add('connectivity-2-end',**{'pass':'repeated'})
+        add('commit')
+        add('connect-end')
+        add('operation-end',lifecycle='returned-success',product_state='Unknown',active_generation='unknown')
+    return events
+
+
+class LostAcknowledgementTests(unittest.TestCase):
+    def validate(self, rows):
+        now=int(time.time())
+        boundary=dict(source='4242-42',last_operation=0,last_elapsed_us=-1,captured_unix=now,window_until=now+60)
+        with tempfile.TemporaryDirectory() as d:
+            p=Path(d)/'events.jsonl'
+            p.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+            return verdict.validate(p,'lost-ack','4242-42',boundary)
+
+    def test_two_fresh_committed_operations_accepted(self):
+        self.assertEqual('pass',self.validate(two_committed_operations())['verdict'])
+
+    def test_missing_terminal_or_reused_generation_rejected(self):
+        rows=two_committed_operations()
+        with self.assertRaises(AssertionError): self.validate(rows[:-1])
+        same=copy.deepcopy(rows)
+        for row in same:
+            if row['operation']==2: row['generation']='1'
+        with self.assertRaises(AssertionError): self.validate(same)
+
 class FreshnessTest(unittest.TestCase):
     def test_record_without_current_daemon_identity_is_not_admissible(self):
         with tempfile.TemporaryDirectory() as temp:

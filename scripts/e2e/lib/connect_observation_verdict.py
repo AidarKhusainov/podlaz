@@ -32,6 +32,27 @@ def validate(path, mode, expected_source=None, boundary=None):
         group = by_operation.setdefault(e['operation'], [])
         assert e['sequence'] == len(group) + 1, 'sequence gap'
         group.append(e)
+    if mode == 'lost-ack':
+        # Two independent explicit Connect requests: committed B with its
+        # acknowledgement dropped, followed by a new A replacement.
+        expected_ids = (boundary['last_operation']+1, boundary['last_operation']+2)
+        assert expected_ids[-1] <= 16, 'observer operation limit reached'
+        assert {op for op in by_operation if op > boundary['last_operation']} == set(expected_ids), 'lost acknowledgement operation boundary'
+        generations = []
+        for op in expected_ids:
+            current_group = by_operation[op]
+            assert current_group[0]['event'] == 'operation-start' and current_group[-1]['event'] == 'operation-end', 'missing lost acknowledgement terminal'
+            assert current_group[0]['elapsed_us'] >= boundary['last_elapsed_us'], 'stale lost acknowledgement'
+            assert all(a['elapsed_us'] <= b['elapsed_us'] for a,b in zip(current_group,current_group[1:])), 'event timestamp inversion'
+            for kind, outcome in (('connect-end','succeeded'),('commit','succeeded'),('connectivity-1-end','succeeded'),('connectivity-2-end','succeeded')):
+                assert len([e for e in current_group if e['role']=='B' and e['event']==kind and e['outcome']==outcome]) == 1, 'missing exact committed lifecycle boundary'
+            assert current_group[-1].get('lifecycle') == 'returned-success', 'lost acknowledgement changed daemon outcome'
+            commit = next(e for e in current_group if e['event']=='commit' and e['role']=='B')
+            assert commit['generation'] != 'unknown', 'missing transaction-bound generation'
+            generations.append(commit['generation'])
+        assert len(set(generations)) == 2, 'lost acknowledgement reused generation'
+        return {'scenario': mode, 'verdict': 'pass', 'operations': len(by_operation), 'events': len(events)}
+
     # One and only one new operation must appear after the pre-request
     # snapshot. PID/start-time and a previous complete[-1] are insufficient.
     previous = boundary['last_operation']
@@ -39,6 +60,11 @@ def validate(path, mode, expected_source=None, boundary=None):
     assert all(type(op) is int and op > 0 for op in by_operation), 'invalid operation id'
     assert set(op for op in by_operation if op > previous) == {current}, 'missing or contradictory current operation'
     group = by_operation[current]
+    if mode == 'none':
+        previous_generations = {e['generation'] for op, g in by_operation.items() if op <= previous
+                                for e in g if e['event'] == 'generation-bound' and e['generation'] != 'unknown'}
+        current_commits = [e for e in group if e['role']=='B' and e['event']=='commit' and e['outcome']=='succeeded']
+        assert len(current_commits) == 1 and current_commits[0]['generation'] not in previous_generations, 'no new data-plane generation'
     assert group[0]['event'] == 'operation-start', 'missing current admission boundary'
     assert group[-1]['event'] == 'operation-end', 'missing current daemon terminal'
     assert group[0]['elapsed_us'] >= boundary['last_elapsed_us'], 'startup replay or stale elapsed boundary'

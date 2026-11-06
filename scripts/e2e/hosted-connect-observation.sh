@@ -19,14 +19,14 @@ OBS_BASE_KEYS=()
 for key in "${EVIDENCE_KEYS[@]}"; do
   [[ "$key" == transition.* ]] || OBS_BASE_KEYS+=("$key")
 done
-EVIDENCE_KEYS=("${OBS_BASE_KEYS[@]}")
+EVIDENCE_KEYS=("${OBS_BASE_KEYS[@]}" transition.lost_response_committed)
 
 assert_public_artifact_privacy() {
   python3 - "${E2E_ARTIFACT_DIR}" <<'PRIVACY'
 import json,re,sys
 from pathlib import Path
 root=Path(sys.argv[1])
-scenarios={'none','b-first','b-second','b-timeout','restore-prequery','restore-query','rollback','reconciliation','cancelled-client'}
+scenarios={'lost-ack','none','b-first','b-second','b-timeout','restore-prequery','restore-query','rollback','reconciliation','cancelled-client'}
 allowed={'hosted-synthetic-tun.txt','connect-observation.jsonl','connect-failure-summary.jsonl'}|{f'connect-observation-{s}.jsonl' for s in scenarios}
 for p in root.iterdir():
     assert p.name in allowed and p.is_file() and not p.is_symlink(), 'unapproved public artifact'
@@ -144,13 +144,21 @@ PY
 
 observation_save() {
   local mode="$1" path="${PRIVATE_ROOT}/observation-${1}.jsonl" source_before source_after
-  source_before="$(observation_source_identity)"
-  guest_exec cat "${OBS_FILE}" >"${path}"
-  source_after="$(observation_source_identity)"
-  [[ "$source_before" == "$source_after" ]]
-  python3 "${SCRIPT_DIR}/lib/connect_observation_verdict.py" "${path}" "${mode}" "$source_before" \
-    "${PRIVATE_ROOT}/observation-${mode}-boundary.json" >>"${OBS_RESULTS}"
-  install -m 0600 "${path}" "${E2E_ARTIFACT_DIR}/connect-observation-${mode}.jsonl"
+  local attempt verdict_file="${PRIVATE_ROOT}/observation-${mode}-verdict.json"
+  for attempt in $(seq 1 30); do
+    source_before="$(observation_source_identity)" || return 1
+    if ! guest_exec cat "${OBS_FILE}" >"${path}"; then sleep 0.2; continue; fi
+    source_after="$(observation_source_identity)" || return 1
+    [[ "${source_before}" == "${source_after}" ]] || return 1
+    if python3 "${SCRIPT_DIR}/lib/connect_observation_verdict.py" "${path}" "${mode}" "${source_before}" \
+      "${PRIVATE_ROOT}/observation-${mode}-boundary.json" >"${verdict_file}" 2>/dev/null; then
+      cat "${verdict_file}" >>"${OBS_RESULTS}"
+      install -m 0600 "${path}" "${E2E_ARTIFACT_DIR}/connect-observation-${mode}.jsonl"
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
 }
 
 observation_cancelled_client() {
@@ -235,6 +243,23 @@ qualify_profile_transitions() {
   guest_exec resolvectl flush-caches
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
   guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
+  # Lost HTTP acknowledgement is a distinct completed daemon-owned B commit,
+  # followed by another explicit A replacement. The existing relay validates
+  # the client failure and the independently committed B authority.
+  observation_reset
+  observation_watch_start
+  observation_boundary lost-ack
+  previous_tx="$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")"
+  started="$(date +%s%N)"
+  qualify_lost_lifecycle_response "${first}" "${second}" "${second_id}" "${session}" "${table}"
+  elapsed="$((($(date +%s%N) - started) / 1000))"
+  assert_transition_verified_active "${first_id}" "${session}" "${table}"
+  new_tx="$(guest_exec jq -er '.active_transaction_id' "${GUEST_PRIVATE}/status.json")"
+  [[ "${new_tx}" != "${previous_tx}" ]] || fail "lost acknowledgement A replacement was a no-op"
+  if [[ "${OBS_ENABLED}" == true ]]; then observation_save lost-ack; fi
+  observation_watch_stop
+  printf '{"scenario":"lost-ack","enabled":"%s","elapsed_us":%s}\n' "${OBS_ENABLED}" "${elapsed}" >>"${OBS_RESULTS}"
+
   if [[ "${OBS_ENABLED}" != true ]]; then
     observation_arm b-timeout
     observation_watch_start
@@ -273,7 +298,6 @@ qualify_profile_transitions() {
     elapsed="$((($(date +%s%N) - started) / 1000))"
     printf '{"scenario":"%s","enabled":"true","elapsed_us":%s}\n' "${mode}" "${elapsed}" >>"${OBS_RESULTS}"
     if [[ "${mode}" == restore-prequery ]]; then wait "${OBS_CONTROLLER_PID}"; fi
-    observation_watch_stop
     if [[ "${mode}" == rollback || "${mode}" == reconciliation || "${mode}" == restore-* ]]; then
       run_guest_user /usr/bin/podlaz status >"${PRIVATE_ROOT}/fault-status.stdout" 2>"${PRIVATE_ROOT}/fault-status.stderr" || true
       if grep -Fxq 'Status: Connected' "${PRIVATE_ROOT}/fault-status.stdout"; then return 1; fi
@@ -281,6 +305,10 @@ qualify_profile_transitions() {
       assert_transition_verified_active "${first_id}" "${session}" "${table}"
     fi
     observation_save "${mode}"
+    if [[ "${mode}" == cancelled-client ]]; then
+      assert_transition_verified_active "${first_id}" "${session}" "${table}"
+    fi
+    observation_watch_stop
     assert_foreign_sentinel
     guest_exec rm -f "${OBS_ROOT}/fault.json"
     guest_exec chmod 0755 /usr/lib/podlaz/xray
