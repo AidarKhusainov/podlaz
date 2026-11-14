@@ -8,6 +8,7 @@ import (
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 func TestNetworkSessionTeardownOrdersTerminalCleanupBehindPrivacyEnvelope(t *testing.T) {
@@ -133,29 +134,91 @@ func TestNetworkSessionTeardownPreservesAuthorityOnEnvelopeRemovalFailure(t *tes
 	}
 }
 
-func TestNetworkSessionTeardownPostNetworkFailureNeverRearmsResume(t *testing.T) {
+func TestNetworkSessionTeardownCompletesWithHostNetworkWarning(t *testing.T) {
+	for _, failure := range []string{"missing default route", "TCP probe unreachable"} {
+		t.Run(failure, func(t *testing.T) {
+			store := seededProtectedNetworkSessionStore(t, networkSessionIntentResume)
+			coordinator := networkSessionTeardownCoordinator{
+				store: store,
+				cleanupDataPlane: func(context.Context) (api.LifecycleResponse, error) {
+					return api.LifecycleResponse{Connection: "inactive"}, nil
+				},
+				removeProtection:       func(context.Context) error { return store.SetProtection(nil) },
+				verifyRemainingNetwork: failingPostPodlazNetworkVerifier(failure).Verify,
+			}
+
+			response, err := coordinator.Teardown(context.Background(), networkSessionTeardownExplicit)
+			if err != nil || response.Connection != "inactive" || len(response.Warnings) != 1 {
+				t.Fatalf("disconnect should succeed with one host network warning: %#v, %v", response, err)
+			}
+			if _, exists, err := store.Load(); err != nil || exists {
+				t.Fatalf("clean disconnect left session authority: exists=%v err=%v", exists, err)
+			}
+		})
+	}
+}
+
+func TestNetworkSessionTeardownKeepsEnvelopeWhenTransactionRemains(t *testing.T) {
+	store := seededProtectedNetworkSessionStore(t, networkSessionIntentResume)
+	tx := txstate.NewTransaction("tx-remains", "profile-example", planner.ModeTun, fixedClock()())
+	if _, err := (txstate.TransactionStore{RuntimeDir: store.runtimeDir}).Save(tx); err != nil {
+		t.Fatal(err)
+	}
+	coordinator := networkSessionTeardownCoordinator{
+		store: store,
+		cleanupDataPlane: func(context.Context) (api.LifecycleResponse, error) {
+			return api.LifecycleResponse{Connection: "inactive"}, nil
+		},
+		removeProtection:       func(context.Context) error { return store.SetProtection(nil) },
+		verifyRemainingNetwork: failingPostPodlazNetworkVerifier("missing default route").Verify,
+	}
+	if _, err := coordinator.Teardown(context.Background(), networkSessionTeardownExplicit); err == nil {
+		t.Fatal("expected unresolved transaction to block teardown")
+	}
+	assertProtectionState(t, store, networkSessionProtectionArmed)
+}
+
+func TestExplicitDisconnectAfterCoreExitRetainsProtectionAndTransaction(t *testing.T) {
+	store := newNetworkSessionStateStore(t.TempDir(), nil)
+	if _, err := store.BeginOrResume(testContinuationRequest()); err != nil {
+		t.Fatal(err)
+	}
+	protection := testArmedPrivacyProtection()
+	if err := store.SetProtection(&protection); err != nil {
+		t.Fatal(err)
+	}
+	tx := txstate.NewTransaction("tx-core-exited", "profile-example", planner.ModeTun, fixedClock()())
+	if _, err := (txstate.TransactionStore{RuntimeDir: store.runtimeDir}).Save(tx); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewXrayManager(store.runtimeDir)
+	manager.state = xrayState{Connection: api.ConnectionCoreExited, Mode: planner.ModeTun, TransactionID: tx.ID}
+	lifecycle := newNetworkSessionLifecycle(startupScanRefreshingLifecycle{lifecycle: manager}, newNetworkSessionContinuationStore(store.runtimeDir, nil))
+	if _, err := lifecycle.Disconnect(context.Background()); err == nil {
+		t.Fatal("disconnect reported clean after core exit with an unresolved transaction")
+	}
+	assertProtectionState(t, store, networkSessionProtectionArmed)
+	if _, _, err := (txstate.TransactionStore{RuntimeDir: store.runtimeDir}).Load(tx.ID); err != nil {
+		t.Fatalf("unresolved transaction authority was lost: %v", err)
+	}
+}
+
+func TestNetworkSessionTeardownRetainsAuthorityWhenRouteStillUsesPodlaz(t *testing.T) {
 	store := seededProtectedNetworkSessionStore(t, networkSessionIntentResume)
 	coordinator := networkSessionTeardownCoordinator{
 		store: store,
 		cleanupDataPlane: func(context.Context) (api.LifecycleResponse, error) {
 			return api.LifecycleResponse{Connection: "inactive"}, nil
 		},
-		removeProtection: func(context.Context) error { return store.SetProtection(nil) },
-		verifyRemainingNetwork: func(context.Context) error {
-			return errors.New("synthetic post-network verification failure")
-		},
+		removeProtection:       func(context.Context) error { return store.SetProtection(nil) },
+		verifyRemainingNetwork: func(context.Context) error { return errPostPodlazTunPath },
 	}
-
-	_, err := coordinator.Teardown(context.Background(), networkSessionTeardownTerminal)
-	if err == nil {
-		t.Fatal("expected post-network verification failure")
+	response, err := coordinator.Teardown(context.Background(), networkSessionTeardownExplicit)
+	if !errors.Is(err, errPostPodlazTunPath) || len(response.Warnings) != 0 {
+		t.Fatalf("route through Podlaz must block teardown completion: %#v, %v", response, err)
 	}
-	state, exists, loadErr := store.Load()
-	if loadErr != nil || !exists {
-		t.Fatalf("post-network failure lost terminal session evidence: exists=%v err=%v", exists, loadErr)
-	}
-	if state.Intent != networkSessionIntentTerminal || state.Protection != nil {
-		t.Fatalf("post-network failure must remain terminal with removed envelope recorded: %#v", state)
+	if _, exists, loadErr := store.Load(); loadErr != nil || !exists {
+		t.Fatalf("route through Podlaz lost recovery authority: exists=%v err=%v", exists, loadErr)
 	}
 }
 

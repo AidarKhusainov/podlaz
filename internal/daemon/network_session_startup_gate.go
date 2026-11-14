@@ -56,12 +56,19 @@ func (g *networkSessionStartupMutationGate) Disconnect(ctx context.Context) (api
 }
 
 func withNetworkSessionResumeWarning(response api.RecoveryResponse, cause error) api.RecoveryResponse {
+	target := "network session continuation"
 	message := networkSessionResumeWarningMessage
+	if plan := response.NetworkSession; plan != nil &&
+		(networkSessionIntent(plan.Intent) == networkSessionIntentDisconnect ||
+			networkSessionIntent(plan.Intent) == networkSessionIntentTerminal) {
+		target = "network session teardown"
+		message = "owned Network Session cleanup is incomplete"
+	}
 	if cause != nil {
 		message += ": " + cause.Error()
 	}
 	response.Warnings = append(response.Warnings, api.RecoveryWarning{
-		Target:  "network session continuation",
+		Target:  target,
 		Message: message,
 	})
 	return response

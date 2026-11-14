@@ -38,6 +38,7 @@ PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
 PODLAZ_E2E_PROFILE_TRANSITIONS="${PODLAZ_E2E_PROFILE_TRANSITIONS:-false}"
 PODLAZ_E2E_GUEST_SUITE="${PODLAZ_E2E_GUEST_SUITE:-noble}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
+HOSTED_OFFLINE_DISCONNECT="${PODLAZ_E2E_HOSTED_OFFLINE_DISCONNECT:-false}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -95,6 +96,15 @@ if [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" == true ]]; then
     guest.baseline_restored
     outer.cleanup
     artifact.privacy
+  )
+fi
+
+if [[ "${HOSTED_OFFLINE_DISCONNECT}" == true ]]; then
+  EVIDENCE_KEYS+=(
+    disconnect.probe_target_unreachable
+    disconnect.no_default_route
+    disconnect.restart_and_repeat
+    disconnect.reconnect_after_uplink_restore
   )
 fi
 
@@ -998,7 +1008,8 @@ install_tun_authorization() {
 polkit.addRule(function(action, subject) {
     if (subject.user == "e2e" &&
         (action.id == "io.github.aidarkhusainov.podlaz.connect-tun" ||
-         action.id == "io.github.aidarkhusainov.podlaz.disconnect")) {
+         action.id == "io.github.aidarkhusainov.podlaz.disconnect" ||
+         action.id == "io.github.aidarkhusainov.podlaz.configure-autostart")) {
         return polkit.Result.YES;
     }
 });
@@ -1469,6 +1480,132 @@ run_clean_recovery() {
   guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/recovery_json.sh && assert_clean_recovery_json_file '${GUEST_PRIVATE}/recover.json'"
 }
 
+assert_direct_https_control() {
+  guest_exec timeout 15 curl -4 -fsS --interface "${GUEST_IF}" \
+    --resolve "example.com:443:$1" -o /dev/null https://example.com/
+}
+
+prepare_offline_disconnect_qualification() {
+  local override=/run/systemd/system/podlazd.service.d/99-offline-disconnect.conf
+  guest_exec install -d -m 0755 /run/systemd/system/podlazd.service.d
+  guest_exec tee "${override}" >/dev/null <<'EOF_OVERRIDE'
+[Service]
+Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE=true
+Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE_DIR=/run/podlaz/offline-disconnect
+Environment=PODLAZ_E2E_PRIVACY_PROTECTION_CLEAN_PAUSE=true
+EOF_OVERRIDE
+  guest_exec systemctl daemon-reload
+  guest_exec systemctl restart podlazd.service
+  wait_guest_status verified-active 120
+  assert_verified_active_authority
+  run_guest_user /usr/bin/podlaz autostart enable >"${PRIVATE_ROOT}/autostart-enable.stdout"
+}
+
+wait_offline_disconnect_boundary() {
+  local marker="$1" disconnect_pid="$2" attempt
+  for attempt in $(seq 1 100); do
+    guest_exec test -f "${marker}" >/dev/null 2>&1 && return 0
+    kill -0 "${disconnect_pid}" 2>/dev/null || return 1
+    sleep 0.2
+  done
+  return 1
+}
+
+qualify_disconnect_with_unavailable_network() {
+  local mode run control_ip default_route expected_warning disconnect_pid daemon_pid replacement_pid
+  local hook_dir=/run/podlaz/offline-disconnect
+  local session=/run/podlaz/network-session-continuation.json
+  local -a route_args
+  control_ip="$(guest_exec getent ahostsv4 example.com | awk 'NR == 1 { print $1 }')"
+  [[ -n "${control_ip}" ]]
+  default_route="$(guest_exec ip -4 route show default dev "${GUEST_IF}")"
+  [[ -n "${default_route}" && "${default_route}" != *$'\n'* ]]
+  read -r -a route_args <<<"${default_route}"
+
+  for mode in probe_target_unreachable no_default_route; do
+    for run in disconnect restart; do
+      mark_failure product "disconnect.${mode}.${run}.boundary"
+      guest_exec rm -f "${hook_dir}"/terminal-{data-plane,protection}-clean.{ready,continue}
+      run_guest_user timeout 50 /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/${mode}-${run}.stdout" 2>"${PRIVATE_ROOT}/${mode}-${run}.stderr" &
+      disconnect_pid=$!
+      wait_offline_disconnect_boundary "${hook_dir}/terminal-data-plane-clean.ready" "${disconnect_pid}"
+      guest_exec touch "${hook_dir}/terminal-data-plane-clean.continue"
+      wait_offline_disconnect_boundary "${hook_dir}/terminal-protection-clean.ready" "${disconnect_pid}"
+      guest_exec jq -e '.intent == "disconnect" and .protection == null' "${session}" >/dev/null
+      guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent post-cleanup '${HOSTED_NETWORK_AUTHORITY_HELPER}' '${GUEST_MANIFEST}'"
+      assert_foreign_sentinel
+
+      mark_failure fixture "disconnect.${mode}.${run}.inject"
+      if [[ "${mode}" == probe_target_unreachable ]]; then
+        guest_exec nft add table ip pzsynt_probe_fault
+        guest_exec nft 'add chain ip pzsynt_probe_fault output { type filter hook output priority 10; }'
+        guest_exec nft add rule ip pzsynt_probe_fault output oifname "${GUEST_IF}" \
+          ip daddr 1.1.1.1 tcp dport 53 reject with icmp type host-unreachable
+        expected_warning='verify remaining host TCP connectivity: .*no route to host'
+        assert_direct_https_control "${control_ip}"
+      else
+        guest_exec ip -4 route del "${route_args[@]}"
+        [[ -z "$(guest_exec ip -4 route show default)" ]]
+        expected_warning='remaining host default IPv4 route is missing'
+        if assert_direct_https_control "${control_ip}" >"${PRIVATE_ROOT}/offline-control.log" 2>&1; then
+          fail "independent direct HTTPS unexpectedly succeeded without a default route"
+        fi
+      fi
+
+      mark_failure product "disconnect.${mode}.${run}"
+      if [[ "${run}" == disconnect ]]; then
+        guest_exec touch "${hook_dir}/terminal-protection-clean.continue"
+        wait "${disconnect_pid}"
+        grep -Fx 'Disconnected' "${PRIVATE_ROOT}/${mode}-${run}.stdout" >/dev/null
+        grep -E "^Warning: Ordinary network check failed after [^:]+: ${expected_warning}" "${PRIVATE_ROOT}/${mode}-${run}.stdout" >/dev/null
+        record_evidence "disconnect.${mode}" pass
+      else
+        daemon_pid="$(guest_exec systemctl show -p MainPID --value podlazd.service)"
+        [[ "${daemon_pid}" =~ ^[1-9][0-9]*$ ]]
+        guest_exec systemctl kill --kill-whom=main --signal=KILL podlazd.service
+        if wait "${disconnect_pid}"; then
+          fail "disconnect unexpectedly returned success before the interrupted teardown was finalized"
+        fi
+        guest_exec systemctl reset-failed podlazd.service
+        guest_exec systemctl start podlazd.service
+        wait_guest_status clean-inactive 80
+        replacement_pid="$(guest_exec systemctl show -p MainPID --value podlazd.service)"
+        [[ "${replacement_pid}" =~ ^[1-9][0-9]*$ && "${replacement_pid}" != "${daemon_pid}" ]]
+        guest_exec journalctl -u podlazd.service "_PID=${replacement_pid}" --no-pager >"${PRIVATE_ROOT}/${mode}-restart.log"
+        grep -E "Ordinary network check failed after [^:]+: ${expected_warning}" "${PRIVATE_ROOT}/${mode}-restart.log" >/dev/null
+      fi
+      wait_guest_status clean-inactive 80
+      assert_terminal_authority_clean
+      run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/repeat-${mode}.stdout"
+      grep -Fx 'Disconnected' "${PRIVATE_ROOT}/repeat-${mode}.stdout" >/dev/null
+      run_guest_user /usr/bin/podlaz status >"${PRIVATE_ROOT}/status-${mode}.stdout"
+      grep -Fx 'Status: Disconnected' "${PRIVATE_ROOT}/status-${mode}.stdout" >/dev/null
+      grep -Fx 'Autostart: Enabled for next boot' "${PRIVATE_ROOT}/status-${mode}.stdout" >/dev/null
+      run_clean_recovery
+
+      mark_failure fixture "disconnect.${mode}.${run}.restore"
+      if [[ "${mode}" == probe_target_unreachable ]]; then
+        guest_exec nft delete table ip pzsynt_probe_fault
+      else
+        guest_exec ip -4 route replace "${route_args[@]}"
+      fi
+      assert_direct_https_control "${control_ip}"
+      assert_guest_network_baseline_restored
+
+      mark_failure product "disconnect.${mode}.${run}.reconnect"
+      run_guest_user /usr/bin/podlaz connect >"${PRIVATE_ROOT}/reconnect-${mode}.stdout" 2>"${PRIVATE_ROOT}/reconnect-${mode}.stderr"
+      wait_guest_status verified-active 120
+      assert_verified_active_authority
+    done
+  done
+
+  guest_exec rm -f /run/systemd/system/podlazd.service.d/99-offline-disconnect.conf
+  guest_exec systemctl daemon-reload
+  guest_exec touch "${hook_dir}/terminal-protection-clean.continue"
+  record_evidence disconnect.restart_and_repeat pass
+  record_evidence disconnect.reconnect_after_uplink_restore pass
+}
+
 run_scenario() {
   local import_code connect_code
   mark_failure infrastructure outer.baseline
@@ -1560,6 +1697,10 @@ run_scenario() {
     run_tun_doctor
 
     qualify_profile_transitions
+    if [[ "${HOSTED_OFFLINE_DISCONNECT}" == true ]]; then
+      prepare_offline_disconnect_qualification
+      qualify_disconnect_with_unavailable_network
+    fi
 
     mark_failure diagnostic_unknown tun.disconnect
     run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr"
@@ -1598,6 +1739,10 @@ main() {
   case "${HOSTED_EXPECT_CONNECT_FAILURE}:${HOSTED_EXPECT_EXTERNAL_TERMINAL}" in
     false:false|true:false|false:true) ;;
     *) fail "hosted failure mode flags are invalid or conflicting" ;;
+  esac
+  case "${HOSTED_OFFLINE_DISCONNECT}:${HOSTED_EXPECT_EXTERNAL_TERMINAL}:${HOSTED_EXPECT_CONNECT_FAILURE}" in
+    false:*|true:false:false) ;;
+    *) fail "offline disconnect qualification flags are invalid or conflicting" ;;
   esac
   install -d -m 0700 "${PRIVATE_ROOT}" "${E2E_ARTIFACT_DIR}" "${XRAY_ROOT}"
   : >"${REPORT}"

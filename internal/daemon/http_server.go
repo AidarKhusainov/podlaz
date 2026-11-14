@@ -154,8 +154,12 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 
 				networkSessionPlan := api.CloneNetworkSessionRecoveryState(response.NetworkSession)
 				var genericResponse api.RecoveryResponse
+				var networkWarnings []api.RecoveryWarning
+				recoveryCtx := context.WithValue(r.Context(), postPodlazNetworkWarningSinkKey{}, func(warning api.RecoveryWarning) {
+					networkWarnings = append(networkWarnings, warning)
+				})
 				resumeResult, retryErr := resumeNetworkSessionResult(
-					r.Context(),
+					recoveryCtx,
 					runtime.continuation,
 					runtime.sessionLifecycle,
 					runtime.currentStatus,
@@ -175,6 +179,9 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 					}
 				}
 				response = applyNetworkSessionResumeResult(response, runtime.startupMutationGate, resumeResult, retryErr)
+				if retryErr == nil {
+					response.Warnings = append(response.Warnings, networkWarnings...)
+				}
 				refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
 				runtime.forceRefreshStartupScan(refreshCtx)
 				cancel()

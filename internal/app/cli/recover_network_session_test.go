@@ -82,3 +82,22 @@ func TestRecoverExecuteSuccessfulResumeReturnsSuccess(t *testing.T) {
 		t.Fatalf("successful resumed Network Session must be a successful recover result: %#v", result)
 	}
 }
+
+func TestRecoverExecuteOrdinaryNetworkWarningDoesNotIndicateIncompleteCleanup(t *testing.T) {
+	result := recoverExecuteViewFromAPI(api.RecoveryResponse{
+		Mode: "execute",
+		Warnings: []api.RecoveryWarning{{
+			Target:  api.RecoveryWarningOrdinaryNetwork,
+			Message: "Ordinary network check failed after 5ms: synthetic failure",
+		}},
+	})
+	if result.HasFailures() || result.HasIncompleteCleanup() {
+		t.Fatalf("ordinary network warning treated as incomplete cleanup: %#v", result)
+	}
+	if got := recoverExecuteJSON(result); got["status"] != "ok" {
+		t.Fatalf("recovery with a network warning must report successful cleanup: %#v", got)
+	}
+	if !strings.Contains(result.String(), "Warning: Ordinary network check failed") {
+		t.Fatalf("recovery dropped the warning: %s", result.String())
+	}
+}

@@ -6,12 +6,13 @@ import (
 	"fmt"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
 )
 
 // continuePersistedNetworkSessionTeardown resumes an already-declared
 // disconnect/terminal convergence after exact data-plane recovery has finished.
 // It never recreates protection: terminal convergence can only verify/remove the
-// exact persisted envelope, prove the remaining host network, and clear session
+// exact persisted envelope, check the remaining host network, and clear session
 // authority.
 func continuePersistedNetworkSessionTeardown(ctx context.Context, store networkSessionStateStore) error {
 	remainingNetwork := newPostPodlazNetworkVerifier()
@@ -83,6 +84,9 @@ func convergePersistedNetworkSessionTeardownWith(
 	if state.Intent != networkSessionIntentDisconnect && state.Intent != networkSessionIntentTerminal {
 		return fmt.Errorf("persisted teardown requires disconnect/terminal intent, found %q", state.Intent)
 	}
+	if err := recovery.VerifyAllRolledBackTransactionAbsence(ctx, store.runtimeDir); err != nil {
+		return fmt.Errorf("confirm exact data-plane cleanup before removing persisted privacy protection: %w", err)
+	}
 	if err := maybePauseAfterTerminalDataPlaneCleanup(ctx); err != nil {
 		return fmt.Errorf("pause after exact data-plane cleanup for E2E verification: %w", err)
 	}
@@ -97,10 +101,7 @@ func convergePersistedNetworkSessionTeardownWith(
 		}
 	}
 
-	if verifyRemainingNetwork == nil {
-		return errors.New("persisted teardown has no remaining-network verifier")
-	}
-	if err := verifyRemainingNetwork(ctx); err != nil {
+	if _, err := checkPostPodlazNetwork(ctx, verifyRemainingNetwork); err != nil {
 		return fmt.Errorf("verify remaining host network after persisted teardown: %w", err)
 	}
 

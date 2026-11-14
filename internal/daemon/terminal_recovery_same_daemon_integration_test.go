@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -111,7 +112,7 @@ while true; do sleep 3600 & wait $!; done
 	continuation.continueTeardown = func(ctx context.Context, stateStore networkSessionStateStore) error {
 		return continuePersistedNetworkSessionTeardownWith(ctx, stateStore, envelope, func(context.Context) error {
 			postNetworkCalls++
-			return nil
+			return errors.New("synthetic direct TCP failure")
 		})
 	}
 
@@ -158,6 +159,7 @@ while true; do sleep 3600 & wait $!; done
 	}
 
 	gate := newNetworkSessionStartupMutationGate(sessionLifecycle)
+	gate.Block()
 	currentStatus := func(ctx context.Context) api.StatusResponse {
 		status := manager.Status(ctx)
 		if status.Connection == "active" {
@@ -185,8 +187,11 @@ while true; do sleep 3600 & wait $!; done
 	if response.NetworkSession != nil {
 		t.Fatalf("same-daemon terminal recovery retained stale Network Session projection: %#v", response.NetworkSession)
 	}
-	if len(response.Warnings) != 0 {
-		t.Fatalf("same-daemon terminal recovery warnings: %#v", response.Warnings)
+	if len(response.Warnings) != 1 || response.Warnings[0].Target != api.RecoveryWarningOrdinaryNetwork {
+		t.Fatalf("same-daemon terminal recovery should report only a network advisory: %#v", response.Warnings)
+	}
+	if gate.Blocked() {
+		t.Fatal("ordinary network advisory left the recovery gate blocked")
 	}
 	if !exactStageSawProtection {
 		t.Fatal("exact recovery stage was not observed before session teardown")

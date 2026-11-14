@@ -188,8 +188,11 @@ func renderConnectResponse(stdout io.Writer, p profile.Profile, _ api.LifecycleR
 	fmt.Fprintln(stdout, "Protection: Active")
 }
 
-func renderDisconnectResponse(stdout io.Writer, _ api.LifecycleResponse) {
+func renderDisconnectResponse(stdout io.Writer, response api.LifecycleResponse) {
 	fmt.Fprintln(stdout, "Disconnected")
+	for _, warning := range response.Warnings {
+		fmt.Fprintln(stdout, "Warning:", render.Redact(warning))
+	}
 }
 
 func profileSnapshot(p profile.Profile) api.ProfileSnapshot {

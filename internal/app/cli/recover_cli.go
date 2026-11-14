@@ -26,7 +26,8 @@ type recoverPlanView struct {
 
 type recoverExecuteView struct {
 	recovery.ExecuteResult
-	NetworkSession *api.NetworkSessionRecoveryState
+	NetworkSession  *api.NetworkSessionRecoveryState
+	NetworkWarnings []recovery.Warning
 }
 
 func runRecoverCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
@@ -133,10 +134,7 @@ func runRecoverExecute(ctx context.Context, opts options) (recoverExecuteView, e
 	if err != nil {
 		return recoverExecuteView{}, err
 	}
-	return recoverExecuteView{
-		ExecuteResult:  recoveryResultFromAPI(response),
-		NetworkSession: api.CloneNetworkSessionRecoveryState(response.NetworkSession),
-	}, nil
+	return recoverExecuteViewFromAPI(response), nil
 }
 
 func (p recoverPlanView) String() string {
@@ -148,8 +146,26 @@ func (p recoverPlanView) String() string {
 	return strings.Replace(base, "No changes were applied.\n", networkSessionRecoveryHuman(p.NetworkSession)+"No changes were applied.\n", 1)
 }
 
+func recoverExecuteViewFromAPI(response api.RecoveryResponse) recoverExecuteView {
+	result := recoverExecuteView{NetworkSession: api.CloneNetworkSessionRecoveryState(response.NetworkSession)}
+	cleanupWarnings := make([]api.RecoveryWarning, 0, len(response.Warnings))
+	for _, warning := range response.Warnings {
+		if warning.Target == api.RecoveryWarningOrdinaryNetwork {
+			result.NetworkWarnings = append(result.NetworkWarnings, recovery.Warning{Target: warning.Target, Message: warning.Message})
+		} else {
+			cleanupWarnings = append(cleanupWarnings, warning)
+		}
+	}
+	response.Warnings = cleanupWarnings
+	result.ExecuteResult = recoveryResultFromAPI(response)
+	return result
+}
+
 func (r recoverExecuteView) String() string {
 	base := r.ExecuteResult.String()
+	for _, warning := range r.NetworkWarnings {
+		base += "Warning: " + render.Redact(warning.Message) + "\n"
+	}
 	if r.NetworkSession == nil {
 		return base
 	}
@@ -238,7 +254,7 @@ func recoverExecuteJSON(result recoverExecuteView) map[string]any {
 	payload := map[string]any{
 		"schema_version": "v1",
 		"status":         status,
-		"warnings":       redactedRecoveryWarnings(result.Warnings),
+		"warnings":       redactedRecoveryWarnings(append(append([]recovery.Warning(nil), result.Warnings...), result.NetworkWarnings...)),
 		"errors":         errorsOut,
 		"mode":           "execute",
 		"recovery":       redactedCleanupResults(result.Results),
