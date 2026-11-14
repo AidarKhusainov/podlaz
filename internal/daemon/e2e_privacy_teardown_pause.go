@@ -17,12 +17,25 @@ const (
 	e2ePrivacyTeardownPauseTimeoutEnv = "PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE_TIMEOUT_SECONDS"
 	e2ePrivacyTeardownReadyFile       = "terminal-data-plane-clean.ready"
 	e2ePrivacyTeardownContinueFile    = "terminal-data-plane-clean.continue"
+	e2ePrivacyProtectionCleanPauseEnv = "PODLAZ_E2E_PRIVACY_PROTECTION_CLEAN_PAUSE"
 )
 
 func maybePauseAfterTerminalDataPlaneCleanup(ctx context.Context) error {
 	if !e2ePrivacyTeardownPauseEnabled() {
 		return nil
 	}
+	return pausePrivacyTeardown(ctx, "terminal-data-plane-clean", e2ePrivacyTeardownReadyFile, e2ePrivacyTeardownContinueFile)
+}
+
+func maybePauseAfterTerminalProtectionCleanup(ctx context.Context) error {
+	if !e2ePrivacyTeardownPauseEnabled() || os.Getenv(e2ePrivacyProtectionCleanPauseEnv) != "true" {
+		return nil
+	}
+	const phase = "terminal-protection-clean"
+	return pausePrivacyTeardown(ctx, phase, phase+".ready", phase+".continue")
+}
+
+func pausePrivacyTeardown(ctx context.Context, phase, readyFile, continueFile string) error {
 	dir := strings.TrimSpace(os.Getenv(e2ePrivacyTeardownPauseDirEnv))
 	if dir == "" {
 		return fmt.Errorf("%s requires %s", e2ePrivacyTeardownPauseEnv, e2ePrivacyTeardownPauseDirEnv)
@@ -31,15 +44,15 @@ func maybePauseAfterTerminalDataPlaneCleanup(ctx context.Context) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create privacy teardown E2E directory: %w", err)
 	}
-	ready := filepath.Join(dir, e2ePrivacyTeardownReadyFile)
-	if err := os.WriteFile(ready, []byte("phase=terminal-data-plane-clean\n"), 0o600); err != nil {
+	ready := filepath.Join(dir, readyFile)
+	if err := os.WriteFile(ready, []byte("phase="+phase+"\n"), 0o600); err != nil {
 		return fmt.Errorf("write privacy teardown E2E ready marker: %w", err)
 	}
 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	continuePath := filepath.Join(dir, e2ePrivacyTeardownContinueFile)
+	continuePath := filepath.Join(dir, continueFile)
 	timer := time.NewTimer(e2ePrivacyTeardownPauseTimeout())
 	defer timer.Stop()
 	ticker := time.NewTicker(25 * time.Millisecond)

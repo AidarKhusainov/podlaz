@@ -127,3 +127,21 @@ func postPodlazSnapshotForTest(status netsnapshot.Status, iface string) netsnaps
 		},
 	}
 }
+
+func failingPostPodlazNetworkVerifier(failure string) postPodlazNetworkVerifier {
+	return postPodlazNetworkVerifier{
+		collect: func(context.Context) netsnapshot.Snapshot {
+			if failure == "missing default route" {
+				return postPodlazSnapshotForTest(netsnapshot.StatusMissing, "")
+			}
+			return postPodlazSnapshotForTest(netsnapshot.StatusDetected, "eth0")
+		},
+		verifyRoute: func(context.Context, string) error { return nil },
+		verifyTCP: func(context.Context, string, uint16) error {
+			return errors.New(failure)
+		},
+		verifyDNS: func(context.Context, string) ([]string, error) {
+			return []string{"192.0.2.80"}, nil
+		},
+	}
+}

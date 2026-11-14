@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
 )
 
 type networkSessionTeardownReason string
@@ -56,6 +57,12 @@ func (c networkSessionTeardownCoordinator) Teardown(ctx context.Context, reason 
 	if err != nil {
 		return response, fmt.Errorf("clean exact Podlaz data plane behind privacy protection: %w", err)
 	}
+	// A lifecycle response alone cannot prove cleanup if its supervisor no
+	// longer has the transaction in memory. Preserve the envelope while
+	// durable transaction inspection reports unresolved or ambiguous state.
+	if err := recovery.VerifyAllRolledBackTransactionAbsence(ctx, c.store.runtimeDir); err != nil {
+		return response, fmt.Errorf("confirm exact data-plane cleanup before removing privacy protection: %w", err)
+	}
 	if err := maybePauseAfterTerminalDataPlaneCleanup(ctx); err != nil {
 		return response, fmt.Errorf("pause after exact data-plane cleanup for E2E verification: %w", err)
 	}
@@ -73,10 +80,11 @@ func (c networkSessionTeardownCoordinator) Teardown(ctx context.Context, reason 
 		}
 	}
 
-	if c.verifyRemainingNetwork == nil {
-		return response, errors.New("network session teardown has no post-Podlaz network verifier")
+	if err := maybePauseAfterTerminalProtectionCleanup(ctx); err != nil {
+		return response, fmt.Errorf("pause after exact protection cleanup for E2E verification: %w", err)
 	}
-	if err := c.verifyRemainingNetwork(ctx); err != nil {
+	warning, err := checkPostPodlazNetwork(ctx, c.verifyRemainingNetwork)
+	if err != nil {
 		return response, fmt.Errorf("verify remaining host network after Podlaz teardown: %w", err)
 	}
 
@@ -91,6 +99,9 @@ func (c networkSessionTeardownCoordinator) Teardown(ctx context.Context, reason 
 		if err := c.store.Remove(); err != nil {
 			return response, fmt.Errorf("clear converged Network Session authority: %w", err)
 		}
+	}
+	if warning != "" {
+		response.Warnings = append(response.Warnings, warning)
 	}
 	return response, nil
 }

@@ -4,11 +4,43 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/AidarKhusainov/podlaz/internal/api"
 
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
+
+var (
+	errPostPodlazVerifierIncomplete = errors.New("post-Podlaz network verifier is incomplete")
+	errPostPodlazTunPath            = errors.New("remaining host route still uses the Podlaz TUN interface")
+)
+
+type postPodlazNetworkWarningSinkKey struct{}
+
+func checkPostPodlazNetwork(ctx context.Context, verify func(context.Context) error) (string, error) {
+	if verify == nil {
+		return "", errPostPodlazVerifierIncomplete
+	}
+	start := time.Now()
+	err := verify(ctx)
+	if err == nil {
+		return "", nil
+	}
+	if errors.Is(err, errPostPodlazTunPath) || errors.Is(err, errPostPodlazVerifierIncomplete) {
+		return "", err
+	}
+	warning := fmt.Sprintf("Ordinary network check failed after %s: %s",
+		time.Since(start).Round(time.Millisecond), sanitizeConnectivityDiagnostic(err.Error()))
+	log.Printf("podlazd: %s", warning)
+	if sink, ok := ctx.Value(postPodlazNetworkWarningSinkKey{}).(func(api.RecoveryWarning)); ok {
+		sink(api.RecoveryWarning{Target: api.RecoveryWarningOrdinaryNetwork, Message: warning})
+	}
+	return warning, nil
+}
 
 type postPodlazNetworkVerifier struct {
 	collect     func(context.Context) netsnapshot.Snapshot
@@ -30,7 +62,7 @@ func newPostPodlazNetworkVerifier() postPodlazNetworkVerifier {
 
 func (v postPodlazNetworkVerifier) Verify(ctx context.Context) error {
 	if v.collect == nil || v.verifyRoute == nil || v.verifyTCP == nil || v.verifyDNS == nil {
-		return errors.New("post-Podlaz network verifier is incomplete")
+		return errPostPodlazVerifierIncomplete
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -45,7 +77,7 @@ func (v postPodlazNetworkVerifier) Verify(ctx context.Context) error {
 		return errors.New("remaining host default IPv4 route has no interface")
 	}
 	if iface == netsnapshot.DefaultTunName {
-		return errors.New("remaining host default IPv4 route still uses the Podlaz TUN interface")
+		return errPostPodlazTunPath
 	}
 
 	if err := runProbe(ctx, routeProbeTimeout, func(probeCtx context.Context) error {
@@ -53,10 +85,11 @@ func (v postPodlazNetworkVerifier) Verify(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("verify remaining host route: %w", err)
 	}
+	tcpStarted := time.Now()
 	if err := runProbe(ctx, tcpProbeTimeout, func(probeCtx context.Context) error {
 		return v.verifyTCP(probeCtx, defaultTunProbeHost, defaultTunProbePort)
 	}); err != nil {
-		return fmt.Errorf("verify remaining host TCP connectivity: %w", err)
+		return fmt.Errorf("verify remaining host TCP connectivity: %w (TCP probe elapsed %s)", err, time.Since(tcpStarted).Round(time.Microsecond))
 	}
 	if err := runProbe(ctx, dnsProbeTimeout, func(probeCtx context.Context) error {
 		resolved, err := v.verifyDNS(probeCtx, defaultTunDNSProbeName)
@@ -89,7 +122,7 @@ func defaultVerifyPostPodlazRoute(ctx context.Context, host string) error {
 			return errors.New("route lookup returned an empty interface")
 		}
 		if iface == netsnapshot.DefaultTunName {
-			return errors.New("route lookup still uses the Podlaz TUN interface")
+			return errPostPodlazTunPath
 		}
 		return nil
 	}

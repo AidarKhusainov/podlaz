@@ -7,6 +7,9 @@ import (
 
 const RecoverPath = "/v1/recover"
 
+// RecoveryWarningOrdinaryNetwork identifies a reachability advisory after exact cleanup.
+const RecoveryWarningOrdinaryNetwork = "ordinary network"
+
 type RecoveryResponse struct {
 	Mode           string                       `json:"mode"`
 	Results        []RecoveryCleanupResult      `json:"results,omitempty"`

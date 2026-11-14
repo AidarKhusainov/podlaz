@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"testing"
 
@@ -89,30 +88,26 @@ func TestPersistedRemovingProtectionConvergesWhenTableAlreadyAbsent(t *testing.T
 	}
 }
 
-func TestPersistedProtectionClearedButPostNetworkProofIncompleteRetriesWithoutReconnect(t *testing.T) {
-	store := seededProtectedNetworkSessionStore(t, networkSessionIntentTerminal)
-	if err := store.SetProtection(nil); err != nil {
-		t.Fatal(err)
-	}
-	probeErr := errors.New("synthetic remaining-network proof failure")
-	if err := continuePersistedNetworkSessionTeardownWith(context.Background(), store, &privacyEnvelopeExecutorStub{}, func(context.Context) error {
-		return probeErr
-	}); !errors.Is(err, probeErr) {
-		t.Fatalf("post-network proof failure=%v, want %v", err, probeErr)
-	}
-	state, exists, err := store.Load()
-	if err != nil || !exists {
-		t.Fatalf("post-network failure lost terminal authority: exists=%v err=%v", exists, err)
-	}
-	if state.Intent != networkSessionIntentTerminal || state.Protection != nil {
-		t.Fatalf("post-network failure changed terminal authority: %#v", state)
-	}
-
-	if err := continuePersistedNetworkSessionTeardownWith(context.Background(), store, &privacyEnvelopeExecutorStub{}, func(context.Context) error { return nil }); err != nil {
-		t.Fatalf("retry post-network convergence: %v", err)
-	}
-	if _, exists, err := store.Load(); err != nil || exists {
-		t.Fatalf("post-network retry left session authority: exists=%v err=%v", exists, err)
+func TestPersistedTeardownCompletesWithoutHostReachabilityOrReconnect(t *testing.T) {
+	for _, failure := range []string{"missing default route", "TCP probe unreachable"} {
+		t.Run(failure, func(t *testing.T) {
+			store := seededProtectedNetworkSessionStore(t, networkSessionIntentDisconnect)
+			if err := store.SetProtection(nil); err != nil {
+				t.Fatal(err)
+			}
+			continuation := newNetworkSessionContinuationStore(store.runtimeDir, fixedBootID("boot-a"))
+			continuation.continueTeardown = func(ctx context.Context, store networkSessionStateStore) error {
+				return continuePersistedNetworkSessionTeardownWith(ctx, store, &privacyEnvelopeExecutorStub{}, failingPostPodlazNetworkVerifier(failure).Verify)
+			}
+			events := []string{}
+			resumed, err := resumeNetworkSession(context.Background(), continuation, networkSessionRecordingLifecycle{events: &events}, nil, nil)
+			if err != nil || resumed || len(events) != 0 {
+				t.Fatalf("restart should converge without reconnect: resumed=%v events=%v err=%v", resumed, events, err)
+			}
+			if _, exists, err := store.Load(); err != nil || exists {
+				t.Fatalf("restart left session authority: exists=%v err=%v", exists, err)
+			}
+		})
 	}
 }
 

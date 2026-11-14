@@ -133,7 +133,10 @@ Replacement is a generation transition within one Network Session. Endpoint-base
 
 ## Startup, recovery, and lifecycle ordering
 
-Daemon startup first reconciles current-boot Network Session/Privacy Envelope authority. Exact transaction recovery and reconnect intent are then converged through one intent-aware lifecycle. Conflicting lifecycle mutations remain blocked while recovery is incomplete.
+Daemon startup first reconciles current-boot Network Session/Privacy Envelope authority. Exact transaction recovery and reconnect intent are then converged through one intent-aware lifecycle. Conflicting lifecycle mutations remain blocked while recovery is incomplete. A post-teardown route that still points to the Podlaz TUN prevents
+the session from being declared clean. Once exact data-plane and Privacy
+Envelope cleanup are confirmed, failures of ordinary uplink reachability checks
+are advisory. They do not retain reconnect intent or block lifecycle commands.
 
 Fresh boot autostart is considered only after continuation/recovery has conclusively converged and no competing session authority remains. A startup invocation that observed an existing Network Session must not later admit fresh autostart merely because that startup cleaned the old session.
 

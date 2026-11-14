@@ -72,14 +72,7 @@ func inspectNetworkSessionRecoveryPlan(
 		plan.LegacyMigration = plan.LegacyMigration || diagnostic.LegacyMigration
 	}
 
-	switch authority.intent {
-	case networkSessionIntentResume:
-		plan.NextAction = networkSessionResumeRecoveryAction(plan.ReplayDisposition)
-	case networkSessionIntentDisconnect, networkSessionIntentTerminal:
-		plan.NextAction = api.NetworkSessionRecoveryActionContinueTeardown
-	default:
-		plan.NextAction = api.NetworkSessionRecoveryActionManualDiagnosis
-	}
+	plan.NextAction = networkSessionRecoveryAction(plan.Intent, plan.ReplayDisposition)
 	if err := api.ValidateNetworkSessionRecoveryState(*plan); err != nil {
 		return nil, fmt.Errorf("validate network session recovery plan: %w", err)
 	}
@@ -191,7 +184,6 @@ func failedNetworkSessionRecoveryState(plan *api.NetworkSessionRecoveryState, re
 	}
 	out := api.CloneNetworkSessionRecoveryState(plan)
 	out.StartupGate = api.NetworkSessionStartupGateBlocked
-	out.NextAction = api.NetworkSessionRecoveryActionManualDiagnosis
 	if failure, ok := networkSessionResumeFailure(resumeErr); ok {
 		out.ResumeStage = failure.ResumeStage
 		out.LastResumeOutcome = failure.LastResumeOutcome
@@ -224,10 +216,19 @@ func failedNetworkSessionRecoveryState(plan *api.NetworkSessionRecoveryState, re
 		out.ReplayDisposition = ""
 		out.NetworkApplySubphase = ""
 	}
-	if out.Intent == string(networkSessionIntentResume) {
-		out.NextAction = networkSessionResumeRecoveryAction(out.ReplayDisposition)
-	}
+	out.NextAction = networkSessionRecoveryAction(out.Intent, out.ReplayDisposition)
 	return out
+}
+
+func networkSessionRecoveryAction(intent, replayDisposition string) string {
+	switch networkSessionIntent(intent) {
+	case networkSessionIntentDisconnect, networkSessionIntentTerminal:
+		return api.NetworkSessionRecoveryActionContinueTeardown
+	case networkSessionIntentResume:
+		return networkSessionResumeRecoveryAction(replayDisposition)
+	default:
+		return api.NetworkSessionRecoveryActionManualDiagnosis
+	}
 }
 
 func networkSessionResumeRecoveryAction(replayDisposition string) string {

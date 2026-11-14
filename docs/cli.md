@@ -195,7 +195,10 @@ podlaz disconnect
 
 Disconnect expresses desired inactive state. Repeating it while Podlaz is
 conclusively inactive succeeds. Cleanup remains exact-ownership-driven and never
-uses observation or historical resemblance as authority.
+uses observation or historical resemblance as authority. Once owned cleanup is
+confirmed, a failed direct route, TCP, or DNS check can produce a warning with a
+successful disconnect. Check the ordinary uplink before reconnecting if it is
+unavailable. An incomplete owned cleanup still requires recovery.
 
 Successful output:
 
@@ -331,7 +334,9 @@ ambiguous/unowned state remains fail-closed and untouched, so confirmation canno
 broaden authority.
 
 JSON retains the existing redacted diagnostic recovery model for support and
-automated qualification.
+automated qualification. A reachability warning after confirmed teardown leaves
+recovery successful. Inspect the ordinary uplink if connectivity is still
+unavailable.
 
 ### Explicit Proxy-only operation
 
