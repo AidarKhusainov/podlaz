@@ -71,7 +71,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -126,7 +126,7 @@ jobs:
           echo "built_date=${built_date}" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -336,7 +336,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -416,7 +416,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -491,7 +491,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -566,7 +566,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -641,7 +641,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -716,7 +716,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -791,7 +791,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -869,7 +869,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -947,7 +947,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -1025,7 +1025,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -1103,7 +1103,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -1182,7 +1182,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -1272,7 +1272,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -1349,7 +1349,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -1427,7 +1427,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -1505,7 +1505,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -1583,7 +1583,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -1688,7 +1688,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -1792,7 +1792,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -1893,7 +1893,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -2013,7 +2013,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "${CANDIDATE_COMMIT}"
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -2086,7 +2086,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "${CANDIDATE_COMMIT}"
 
       - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: 'go.mod'
           cache: true
